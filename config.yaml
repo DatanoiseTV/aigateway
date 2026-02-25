@@ -7,8 +7,8 @@ server:
         key_file: ""
 admin:
     username: admin
-    password_hash: $2a$10$rtaBke2SLVEhJ.mD2C8HXuHwQUki0nvMo40nNfidlydfgGLDd3xEK
-    session_secret: b328c8b10ca54206c64ed7fd35afb748
+    password_hash: $2a$10$FoUZuRxMiZqrHAxNLZeqBu2fbAsR/srv7FDZWLBnAz0e0.XdxGvCS
+    session_secret: faa965a35d571e15717361786a0a902e
 gemini:
     api_key: ""
     default_model: gemini-flash-lite-latest

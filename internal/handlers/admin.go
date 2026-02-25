@@ -468,8 +468,10 @@ var adminTemplates = []byte(`
         .hidden { display: none; }
     </style>
     <script>
-        function showModal(id) { document.getElementById(id).classList.remove('hidden'); }
-        function hideModal(id) { document.getElementById(id).classList.add('hidden'); }
+        document.addEventListener('DOMContentLoaded', function() {
+            window.showModal = function(id) { var el = document.getElementById(id); if(el) el.classList.remove('hidden'); };
+            window.hideModal = function(id) { var el = document.getElementById(id); if(el) el.classList.add('hidden'); };
+        });
     </script>
 </head>
 <body class="bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 min-h-screen flex items-center justify-center">
@@ -749,8 +751,10 @@ var adminTemplates = []byte(`
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>body { font-family: 'Inter', sans-serif; } .hidden { display: none; }</style>
     <script>
-        function showModal(id) { document.getElementById(id).classList.remove('hidden'); }
-        function hideModal(id) { document.getElementById(id).classList.add('hidden'); }
+        document.addEventListener('DOMContentLoaded', function() {
+            window.showModal = function(id) { var el = document.getElementById(id); if(el) el.classList.remove('hidden'); };
+            window.hideModal = function(id) { var el = document.getElementById(id); if(el) el.classList.add('hidden'); };
+        });
     </script>
 </head>
 <body class="bg-gray-900 min-h-screen">
