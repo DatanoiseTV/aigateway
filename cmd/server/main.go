@@ -70,6 +70,7 @@ func main() {
 	router.Use(middleware.MaxRequestSize(10 << 20))
 
 	proxyHandler := handlers.NewProxyHandler(geminiService)
+	openaiHandler := handlers.NewOpenAIHandler(geminiService)
 
 	rateLimiter := middleware.NewRateLimiter()
 	authMiddleware := middleware.NewAuthMiddleware(clientService)
@@ -78,6 +79,7 @@ func main() {
 		r.Use(authMiddleware.Handler)
 		r.Use(rateLimiter.Middleware)
 		proxyHandler.RegisterRoutes(r)
+		openaiHandler.RegisterRoutes(r)
 	})
 
 	adminHandler, err := handlers.NewAdminHandler(cfg, clientService, statsService, geminiService)

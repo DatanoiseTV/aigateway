@@ -169,6 +169,10 @@ func (s *GeminiService) GetAllowedModels() []string {
 	return s.cfg.Gemini.AllowedModels
 }
 
+func (s *GeminiService) GetDefaultModel() string {
+	return s.cfg.Gemini.DefaultModel
+}
+
 func ParseGeminiResponse(body []byte) (int, int, error) {
 	var resp GeminiResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -211,36 +215,52 @@ func (s *GeminiService) FetchAvailableModels() ([]string, error) {
 		return nil, fmt.Errorf("API key not configured")
 	}
 
-	url := "https://generativelanguage.googleapis.com/v1/models?key=" + s.cfg.Gemini.APIKey
+	models := make([]string, 0)
 
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, err
+	for _, baseURL := range []string{"https://generativelanguage.googleapis.com/v1", "https://generativelanguage.googleapis.com/v1beta"} {
+		url := baseURL + "/models?key=" + s.cfg.Gemini.APIKey
+
+		resp, err := http.Get(url)
+		if err != nil {
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			continue
+		}
+
+		var result struct {
+			Models []struct {
+				Name string `json:"name"`
+			} `json:"models"`
+		}
+
+		if err := json.Unmarshal(body, &result); err != nil {
+			continue
+		}
+
+		for _, m := range result.Models {
+			found := false
+			for _, existing := range models {
+				if existing == m.Name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				models = append(models, m.Name)
+			}
+		}
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("API returned status: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var result struct {
-		Models []struct {
-			Name string `json:"name"`
-		} `json:"models"`
-	}
-
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, err
-	}
-
-	models := make([]string, len(result.Models))
-	for i, m := range result.Models {
-		models[i] = m.Name
+	if len(models) == 0 {
+		return nil, fmt.Errorf("no models found - check API key")
 	}
 
 	return models, nil
