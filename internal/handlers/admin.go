@@ -165,15 +165,16 @@ func (h *AdminHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	recentLogs, _ := h.statsService.GetRecentRequests("", 20)
 	modelUsage, _ := h.statsService.GetModelUsage()
 
+	hasProviders := len(h.cfg.Providers) > 0
 	h.render(w, "dashboard.html", PageData{
 		Title: "Dashboard",
 		User:  h.cfg.Admin.Username,
 		Data: map[string]interface{}{
-			"Stats":      stats,
-			"RecentLogs": recentLogs,
-			"ModelUsage": modelUsage,
-			"GeminiKey":  h.cfg.Gemini.APIKey != "",
-			"Models":     h.cfg.Gemini.AllowedModels,
+			"Stats":        stats,
+			"RecentLogs":   recentLogs,
+			"ModelUsage":   modelUsage,
+			"HasProviders": hasProviders,
+			"Providers":    h.cfg.ProviderNames(),
 		},
 	})
 }
@@ -193,6 +194,7 @@ func (h *AdminHandler) ListClients(w http.ResponseWriter, r *http.Request) {
 		Data: map[string]interface{}{
 			"Clients":     clients,
 			"ClientStats": statsMap,
+			"Providers":   h.cfg.ProviderNames(),
 		},
 	})
 }
@@ -205,6 +207,11 @@ func (h *AdminHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 	if keyType == "" {
 		keyType = "gemini"
 	}
+	backend := r.Form.Get("backend")
+	if backend == "" {
+		backend = "gemini"
+	}
+	systemPrompt := r.Form.Get("system_prompt")
 
 	if name == "" {
 		http.Error(w, "Name is required", http.StatusBadRequest)
@@ -212,6 +219,11 @@ func (h *AdminHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client, apiKey, err := h.clientService.CreateClient(name, description, keyType, h.cfg)
+	if err == nil {
+		client.Backend = backend
+		client.SystemPrompt = systemPrompt
+		h.clientService.UpdateClient(client)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -246,6 +258,7 @@ func (h *AdminHandler) ShowClient(w http.ResponseWriter, r *http.Request) {
 			"Client":     client,
 			"Stats":      clientStats,
 			"RecentLogs": recentLogs,
+			"Providers":  h.cfg.ProviderNames(),
 		},
 	})
 }
@@ -257,6 +270,9 @@ func (h *AdminHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	name := r.Form.Get("name")
 	description := r.Form.Get("description")
 	isActive := r.Form.Get("is_active") == "on"
+	backend := r.Form.Get("backend")
+	backendBaseURL := r.Form.Get("backend_base_url")
+	systemPrompt := r.Form.Get("system_prompt")
 	rateLimitMinute := parseInt(r.Form.Get("rate_limit_minute"), 60)
 	rateLimitHour := parseInt(r.Form.Get("rate_limit_hour"), 1000)
 	rateLimitDay := parseInt(r.Form.Get("rate_limit_day"), 10000)
@@ -275,6 +291,9 @@ func (h *AdminHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	client.Name = name
 	client.Description = description
 	client.IsActive = isActive
+	client.Backend = backend
+	client.BackendBaseURL = backendBaseURL
+	client.SystemPrompt = systemPrompt
 	client.RateLimitMinute = rateLimitMinute
 	client.RateLimitHour = rateLimitHour
 	client.RateLimitDay = rateLimitDay
@@ -352,7 +371,8 @@ func (h *AdminHandler) ShowSettings(w http.ResponseWriter, r *http.Request) {
 		Title: "Settings",
 		User:  h.cfg.Admin.Username,
 		Data: map[string]interface{}{
-			"Config": h.cfg,
+			"Config":    h.cfg,
+			"Providers": h.cfg.Providers,
 		},
 	})
 }
@@ -360,12 +380,43 @@ func (h *AdminHandler) ShowSettings(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 
-	h.cfg.Gemini.APIKey = r.Form.Get("gemini_api_key")
-	h.cfg.Gemini.DefaultModel = r.Form.Get("default_model")
+	// Update each provider's API key and default model from the form
+	for name, pcfg := range h.cfg.Providers {
+		apiKey := r.Form.Get("provider_" + name + "_api_key")
+		if apiKey != "" || pcfg.APIKey != "" {
+			pcfg.APIKey = apiKey
+		}
+		defaultModel := r.Form.Get("provider_" + name + "_default_model")
+		if defaultModel != "" {
+			pcfg.DefaultModel = defaultModel
+		}
+		baseURL := r.Form.Get("provider_" + name + "_base_url")
+		if baseURL != "" {
+			pcfg.BaseURL = baseURL
+		}
+		h.cfg.Providers[name] = pcfg
+	}
 
+	// Handle adding a new provider
+	newName := r.Form.Get("new_provider_name")
+	newType := r.Form.Get("new_provider_type")
+	if newName != "" && newType != "" {
+		h.cfg.Providers[newName] = config.ProviderConfig{
+			Type:           newType,
+			APIKey:         r.Form.Get("new_provider_api_key"),
+			BaseURL:        r.Form.Get("new_provider_base_url"),
+			DefaultModel:   r.Form.Get("new_provider_default_model"),
+			TimeoutSeconds: 120,
+		}
+	}
+
+	// Update Gemini allowed models if the gemini provider still exists
 	allowedModels := r.Form["allowed_models"]
 	if len(allowedModels) > 0 {
-		h.cfg.Gemini.AllowedModels = allowedModels
+		if p, ok := h.cfg.Providers["gemini"]; ok {
+			p.AllowedModels = allowedModels
+			h.cfg.Providers["gemini"] = p
+		}
 	}
 
 	config.Save(h.cfg)
@@ -398,7 +449,10 @@ func (h *AdminHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AdminHandler) GetModels(w http.ResponseWriter, r *http.Request) {
-	models := h.cfg.Gemini.AllowedModels
+	var models []string
+	if p := h.cfg.GetProvider("gemini"); p != nil {
+		models = p.AllowedModels
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"models":[%s]}`, formatStringArray(models))
@@ -623,13 +677,13 @@ var adminTemplates = []byte(`
 
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <!-- Status Banner -->
-        {{if not (index .Data "GeminiKey")}}
+        {{if not (index .Data "HasProviders")}}
         <div class="mb-6 bg-amber-500/10 border border-amber-500/50 rounded-xl p-4 flex items-center justify-between">
             <div class="flex items-center space-x-3">
                 <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
                 </svg>
-                <span class="text-amber-400 font-medium">Gemini API key not configured</span>
+                <span class="text-amber-400 font-medium">No backend providers configured</span>
             </div>
             <a href="/admin/settings" class="text-sm text-amber-400 hover:text-amber-300 font-medium">Configure now →</a>
         </div>
@@ -713,10 +767,10 @@ var adminTemplates = []byte(`
                     </div>
                     <div class="flex items-center justify-between p-4 bg-gray-900/50 rounded-xl">
                         <div class="flex items-center space-x-3">
-                            <div class="w-3 h-3 {{if (index .Data "GeminiKey")}}bg-green-500{{else}}bg-red-500{{end}} rounded-full"></div>
-                            <span class="text-gray-300">Gemini API</span>
+                            <div class="w-3 h-3 {{if (index .Data "HasProviders")}}bg-green-500{{else}}bg-red-500{{end}} rounded-full"></div>
+                            <span class="text-gray-300">Backend Providers</span>
                         </div>
-                        <span class="{{if (index .Data "GeminiKey")}}text-green-400{{else}}text-red-400{{end}} font-medium">{{if (index .Data "GeminiKey")}}Connected{{else}}Not Configured{{end}}</span>
+                        <span class="{{if (index .Data "HasProviders")}}text-green-400{{else}}text-red-400{{end}} font-medium">{{if (index .Data "HasProviders")}}{{len (index .Data "Providers")}} configured{{else}}None{{end}}</span>
                     </div>
                     <div class="flex items-center justify-between p-4 bg-gray-900/50 rounded-xl">
                         <div class="flex items-center space-x-3">
@@ -1050,9 +1104,19 @@ var adminTemplates = []byte(`
                         <option value="anthropic">sk-ant- (Anthropic style)</option>
                     </select>
                 </div>
-                <div class="mb-6">
+                <div class="mb-4">
+                    <label class="block text-gray-300 text-sm font-medium mb-2">Backend Provider</label>
+                    <select name="backend" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        {{range (index .Data "Providers")}}<option value="{{.}}">{{.}}</option>{{end}}
+                    </select>
+                </div>
+                <div class="mb-4">
                     <label class="block text-gray-300 text-sm font-medium mb-2">Description</label>
                     <textarea name="description" placeholder="Optional description" rows="2" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                </div>
+                <div class="mb-6">
+                    <label class="block text-gray-300 text-sm font-medium mb-2">System Prompt <span class="text-gray-500">(optional)</span></label>
+                    <textarea name="system_prompt" placeholder="Injected as system message on every request" rows="2" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
                 </div>
                 <div class="flex space-x-3">
                     <button type="button" onclick="hideModal('createModal')" class="flex-1 px-4 py-3 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition-colors">Cancel</button>
@@ -1207,6 +1271,24 @@ var adminTemplates = []byte(`
                     <div class="mb-6">
                         <label class="block text-gray-400 text-sm font-medium mb-2">Description</label>
                         <textarea name="description" rows="2" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">{{(index .Data "Client").Description}}</textarea>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4 mb-6">
+                        <div>
+                            <label class="block text-gray-400 text-sm font-medium mb-2">Backend Provider</label>
+                            <select name="backend" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                {{range (index .Data "Providers")}}<option value="{{.}}" {{if eq . (index $.Data "Client").Backend}}selected{{end}}>{{.}}</option>{{end}}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 text-sm font-medium mb-2">Base URL Override</label>
+                            <input type="text" name="backend_base_url" value="{{(index .Data "Client").BackendBaseURL}}" placeholder="Leave empty for default" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <p class="text-gray-500 text-xs mt-1">For Ollama/LM Studio per-client URLs</p>
+                        </div>
+                    </div>
+                    <div class="mb-6">
+                        <label class="block text-gray-400 text-sm font-medium mb-2">System Prompt</label>
+                        <textarea name="system_prompt" rows="3" placeholder="Injected as system message on every request from this client" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">{{(index .Data "Client").SystemPrompt}}</textarea>
+                        <p class="text-gray-500 text-xs mt-1">Prepended before the user's messages. Leave empty to disable.</p>
                     </div>
                     <div class="flex items-center justify-between">
                         <label class="flex items-center text-gray-300">
@@ -1467,29 +1549,35 @@ var adminTemplates = []byte(`
     <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {{if .Data.Config}}
         <form method="POST" action="/admin/settings">
-            <!-- Gemini API Settings -->
+            <!-- Providers -->
+            {{range $name, $provider := (index .Data "Providers")}}
             <div class="bg-gray-800 rounded-2xl border border-gray-700 p-6 mb-6">
                 <h3 class="text-lg font-semibold text-white mb-6 flex items-center">
                     <svg class="w-5 h-5 text-blue-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
                     </svg>
-                    Gemini API Configuration
+                    {{$name}} <span class="ml-2 px-2 py-0.5 text-xs font-medium bg-gray-700 text-gray-400 rounded-full">{{$provider.Type}}</span>
                 </h3>
                 
                 <div class="space-y-4">
                     <div>
                         <label class="block text-gray-300 text-sm font-medium mb-2">API Key</label>
-                        <input type="password" name="gemini_api_key" value="{{(index .Data "Config").Gemini.APIKey}}" placeholder="Enter your Gemini API key"
-                            class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <p class="text-gray-500 text-xs mt-1">Get your API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" class="text-blue-400 hover:text-blue-300">Google AI Studio</a></p>
-                    </div>
-                    
-                    <div>
-                        <label class="block text-gray-300 text-sm font-medium mb-2">Default Model</label>
-                        <input type="text" name="default_model" value="{{(index .Data "Config").Gemini.DefaultModel}}" placeholder="gemini-flash-lite-latest"
+                        <input type="password" name="provider_{{$name}}_api_key" value="{{$provider.APIKey}}" placeholder="API key for {{$name}}"
                             class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
-                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-gray-300 text-sm font-medium mb-2">Default Model</label>
+                            <input type="text" name="provider_{{$name}}_default_model" value="{{$provider.DefaultModel}}" placeholder="Default model"
+                                class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-gray-300 text-sm font-medium mb-2">Base URL</label>
+                            <input type="text" name="provider_{{$name}}_base_url" value="{{$provider.BaseURL}}" placeholder="Default for type"
+                                class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                    {{if eq $name "gemini"}}
                     <div class="flex items-center space-x-4 pt-4">
                         <button type="button" id="testBtn" onclick="testConnection()" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium">
                             Test Connection
@@ -1499,17 +1587,62 @@ var adminTemplates = []byte(`
                         </button>
                     </div>
                     <div id="testResult" class="hidden"></div>
+                    {{end}}
+                </div>
+            </div>
+            {{end}}
+
+            <!-- Add New Provider -->
+            <div class="bg-gray-800 rounded-2xl border border-dashed border-gray-600 p-6 mb-6">
+                <h3 class="text-lg font-semibold text-white mb-4 flex items-center">
+                    <svg class="w-5 h-5 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                    </svg>
+                    Add Provider
+                </h3>
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label class="block text-gray-300 text-sm font-medium mb-2">Name</label>
+                        <input type="text" name="new_provider_name" placeholder="e.g. my-ollama" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-gray-300 text-sm font-medium mb-2">Type</label>
+                        <select name="new_provider_type" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="">-- Select --</option>
+                            <option value="gemini">Gemini</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="anthropic">Anthropic</option>
+                            <option value="mistral">Mistral</option>
+                            <option value="ollama">Ollama</option>
+                            <option value="lmstudio">LM Studio</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label class="block text-gray-300 text-sm font-medium mb-2">API Key</label>
+                        <input type="password" name="new_provider_api_key" placeholder="Optional" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-gray-300 text-sm font-medium mb-2">Base URL</label>
+                        <input type="text" name="new_provider_base_url" placeholder="Default for type" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-gray-300 text-sm font-medium mb-2">Default Model</label>
+                    <input type="text" name="new_provider_default_model" placeholder="e.g. llama3.2" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
             </div>
 
-            <!-- Allowed Models -->
+            <!-- Gemini Allowed Models (if gemini provider exists) -->
+            {{with (index (index .Data "Providers") "gemini")}}
             <div class="bg-gray-800 rounded-2xl border border-gray-700 p-6 mb-6">
                 <div class="flex items-center justify-between mb-4">
                     <h3 class="text-lg font-semibold text-white flex items-center">
                         <svg class="w-5 h-5 text-blue-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
                         </svg>
-                        Allowed Models
+                        Gemini Allowed Models
                     </h3>
                     <div class="flex items-center space-x-2">
                         <button type="button" onclick="selectAllModels()" class="px-3 py-1.5 text-xs font-medium bg-blue-600/20 text-blue-400 border border-blue-600/50 rounded-lg hover:bg-blue-600/30 transition-colors">
@@ -1520,9 +1653,9 @@ var adminTemplates = []byte(`
                         </button>
                     </div>
                 </div>
-                <div id="modelSection" class="{{if (index .Data "Config").Gemini.AllowedModels}}{{else}}hidden{{end}} mb-4">
+                <div id="modelSection" class="{{if .AllowedModels}}{{else}}hidden{{end}} mb-4">
                     <div id="modelList" class="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
-                        {{range (index .Data "Config").Gemini.AllowedModels}}
+                        {{range .AllowedModels}}
                         <label class="flex items-center space-x-2 text-gray-300 text-sm">
                             <input type="checkbox" name="allowed_models" value="{{.}}" checked class="rounded bg-gray-900 border-gray-600 text-blue-600">
                             <span>{{.}}</span>
@@ -1530,8 +1663,9 @@ var adminTemplates = []byte(`
                         {{end}}
                     </div>
                 </div>
-                <p class="text-gray-500 text-xs">Click "Fetch Available Models" to get the list from Google's API</p>
+                <p class="text-gray-500 text-xs">Click "Fetch Available Models" above to get the list from Google's API</p>
             </div>
+            {{end}}
 
             <!-- Server Info -->
             <div class="bg-gray-800 rounded-2xl border border-gray-700 p-6 mb-6">

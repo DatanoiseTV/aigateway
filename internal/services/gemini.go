@@ -26,6 +26,14 @@ func NewGeminiService(db *gorm.DB, cfg *config.Config) *GeminiService {
 	return &GeminiService{db: db, cfg: cfg}
 }
 
+// geminiProvider returns the gemini provider config, or a zero-value if not configured.
+func (s *GeminiService) geminiProvider() config.ProviderConfig {
+	if p := s.cfg.GetProvider("gemini"); p != nil {
+		return *p
+	}
+	return config.ProviderConfig{TimeoutSeconds: 120}
+}
+
 // SetOnRequestLogged registers a callback that fires after each request is logged.
 // Used by the dashboard WebSocket hub to push live updates.
 func (s *GeminiService) SetOnRequestLogged(fn func()) {
@@ -86,20 +94,26 @@ type UsageMetadata struct {
 
 // resolveModel applies the allowed model check and falls back to the default if needed.
 func (s *GeminiService) resolveModel(model string) string {
+	gp := s.geminiProvider()
 	if !s.isModelAllowed(model) {
-		if s.cfg.Gemini.DefaultModel != "" {
-			model = s.cfg.Gemini.DefaultModel
+		if gp.DefaultModel != "" {
+			model = gp.DefaultModel
 		}
 	}
 	return model
 }
 
 func (s *GeminiService) ForwardRequest(model string, body []byte) ([]byte, int, error) {
+	gp := s.geminiProvider()
 	model = s.resolveModel(model)
 
-	log.Printf("[GEMINI] ForwardRequest model=%s, default=%s, allowed=%v", model, s.cfg.Gemini.DefaultModel, s.cfg.Gemini.AllowedModels)
+	log.Printf("[GEMINI] ForwardRequest model=%s, default=%s, allowed=%v", model, gp.DefaultModel, gp.AllowedModels)
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, s.cfg.Gemini.APIKey)
+	baseURL := gp.BaseURL
+	if baseURL == "" {
+		baseURL = "https://generativelanguage.googleapis.com/v1beta"
+	}
+	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", baseURL, model, gp.APIKey)
 	log.Printf("[GEMINI] URL: %s", url)
 
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
@@ -110,7 +124,7 @@ func (s *GeminiService) ForwardRequest(model string, body []byte) ([]byte, int, 
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{
-		Timeout: time.Duration(s.cfg.Gemini.TimeoutSeconds) * time.Second,
+		Timeout: time.Duration(gp.TimeoutSeconds) * time.Second,
 	}
 
 	resp, err := client.Do(req)
@@ -129,14 +143,17 @@ func (s *GeminiService) ForwardRequest(model string, body []byte) ([]byte, int, 
 
 // ForwardStreamRequest calls Gemini's streamGenerateContent endpoint and returns
 // the raw HTTP response. The caller is responsible for closing the response body.
-// Gemini streams back a JSON array: [{chunk}, {chunk}, ...] where each chunk
-// has the same structure as a generateContent response with partial text.
 func (s *GeminiService) ForwardStreamRequest(model string, body []byte) (*http.Response, string, error) {
+	gp := s.geminiProvider()
 	model = s.resolveModel(model)
 
-	log.Printf("[GEMINI] ForwardStreamRequest model=%s, default=%s, allowed=%v", model, s.cfg.Gemini.DefaultModel, s.cfg.Gemini.AllowedModels)
+	log.Printf("[GEMINI] ForwardStreamRequest model=%s, default=%s, allowed=%v", model, gp.DefaultModel, gp.AllowedModels)
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:streamGenerateContent?alt=sse&key=%s", model, s.cfg.Gemini.APIKey)
+	baseURL := gp.BaseURL
+	if baseURL == "" {
+		baseURL = "https://generativelanguage.googleapis.com/v1beta"
+	}
+	url := fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse&key=%s", baseURL, model, gp.APIKey)
 	log.Printf("[GEMINI] Stream URL: %s", url)
 
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
@@ -147,7 +164,7 @@ func (s *GeminiService) ForwardStreamRequest(model string, body []byte) (*http.R
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{
-		Timeout: time.Duration(s.cfg.Gemini.TimeoutSeconds) * time.Second,
+		Timeout: time.Duration(gp.TimeoutSeconds) * time.Second,
 	}
 
 	resp, err := client.Do(req)
@@ -213,7 +230,7 @@ func (s *GeminiService) updateDailyUsage(clientID string, inputTokens, outputTok
 }
 
 func (s *GeminiService) isModelAllowed(model string) bool {
-	for _, allowed := range s.cfg.Gemini.AllowedModels {
+	for _, allowed := range s.geminiProvider().AllowedModels {
 		if model == allowed {
 			return true
 		}
@@ -222,11 +239,11 @@ func (s *GeminiService) isModelAllowed(model string) bool {
 }
 
 func (s *GeminiService) GetAllowedModels() []string {
-	return s.cfg.Gemini.AllowedModels
+	return s.geminiProvider().AllowedModels
 }
 
 func (s *GeminiService) GetDefaultModel() string {
-	return s.cfg.Gemini.DefaultModel
+	return s.geminiProvider().DefaultModel
 }
 
 func ParseGeminiResponse(body []byte) (int, int, error) {
@@ -247,11 +264,12 @@ func (s *GeminiService) GetBaseURL() string {
 }
 
 func (s *GeminiService) TestConnection() (string, bool, error) {
-	if s.cfg.Gemini.APIKey == "" {
+	gp := s.geminiProvider()
+	if gp.APIKey == "" {
 		return "API key not configured", false, nil
 	}
 
-	url := "https://generativelanguage.googleapis.com/v1/models?key=" + s.cfg.Gemini.APIKey
+	url := "https://generativelanguage.googleapis.com/v1/models?key=" + gp.APIKey
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -267,14 +285,15 @@ func (s *GeminiService) TestConnection() (string, bool, error) {
 }
 
 func (s *GeminiService) FetchAvailableModels() ([]string, error) {
-	if s.cfg.Gemini.APIKey == "" {
+	gp := s.geminiProvider()
+	if gp.APIKey == "" {
 		return nil, fmt.Errorf("API key not configured")
 	}
 
 	models := make([]string, 0)
 
 	for _, baseURL := range []string{"https://generativelanguage.googleapis.com/v1", "https://generativelanguage.googleapis.com/v1beta"} {
-		url := baseURL + "/models?key=" + s.cfg.Gemini.APIKey
+		url := baseURL + "/models?key=" + gp.APIKey
 
 		resp, err := http.Get(url)
 		if err != nil {
