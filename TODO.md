@@ -14,6 +14,10 @@
 - [x] Fix Gemini request format - proper multi-turn conversation with roles and system instruction
 - [x] Fix error responses to return proper HTTP status codes (429, 502, etc.) instead of 200
 - [x] Use crypto/rand for request ID generation
+- [x] Implement true streaming via Gemini streamGenerateContent endpoint with alt=sse
+- [x] Real-time chunk translation from Gemini SSE to OpenAI SSE format
+- [x] Split handler into streaming/non-streaming paths
+- [x] Token counting and request logging for streamed responses
 
 ### Next Steps
 - Test the application to verify key type selection works
