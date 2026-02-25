@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -66,28 +68,97 @@ type OpenAIModel struct {
 	Permission []interface{} `json:"permission,omitempty"`
 }
 
+// mapOpenAIRoleToGemini converts OpenAI message roles to Gemini API roles.
+// Gemini only supports "user" and "model" roles; system instructions are handled separately.
+func mapOpenAIRoleToGemini(role string) string {
+	switch role {
+	case "assistant":
+		return "model"
+	case "user":
+		return "user"
+	default:
+		return "user"
+	}
+}
+
+// buildGeminiContents converts OpenAI-style messages into Gemini API request format,
+// extracting the system instruction and building a proper multi-turn conversation.
+func buildGeminiContents(messages []map[string]interface{}) (contents []map[string]interface{}, systemInstruction *map[string]interface{}) {
+	for _, msg := range messages {
+		role, _ := msg["role"].(string)
+		content, _ := msg["content"].(string)
+		if content == "" {
+			continue
+		}
+
+		if role == "system" {
+			si := map[string]interface{}{
+				"parts": []map[string]interface{}{
+					{"text": content},
+				},
+			}
+			systemInstruction = &si
+			continue
+		}
+
+		geminiRole := mapOpenAIRoleToGemini(role)
+		contents = append(contents, map[string]interface{}{
+			"role": geminiRole,
+			"parts": []map[string]interface{}{
+				{"text": content},
+			},
+		})
+	}
+	return
+}
+
+// writeOpenAIError sends an OpenAI-compatible error response with the appropriate HTTP status code.
+func writeOpenAIError(w http.ResponseWriter, statusCode int, errMsg, errType string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("x-request-id", "req-"+randomID(12))
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": map[string]interface{}{
+			"message": errMsg,
+			"type":    errType,
+			"code":    nil,
+		},
+	})
+}
+
+// mapGeminiStatusToHTTP converts Gemini API status codes to appropriate HTTP status codes
+// for the OpenAI-compatible response.
+func mapGeminiStatusToHTTP(geminiStatus int) int {
+	switch {
+	case geminiStatus == 429:
+		return http.StatusTooManyRequests
+	case geminiStatus == 403:
+		return http.StatusForbidden
+	case geminiStatus == 401:
+		return http.StatusUnauthorized
+	case geminiStatus >= 500:
+		return http.StatusBadGateway
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	client := middleware.GetClientFromContext(r.Context())
 	if client == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Unauthorized"})
+		writeOpenAIError(w, http.StatusUnauthorized, "Unauthorized", "authentication_error")
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to read request body"})
+		writeOpenAIError(w, http.StatusBadRequest, "Failed to read request body", "invalid_request_error")
 		return
 	}
 
 	var req OpenAIChatRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		writeOpenAIError(w, http.StatusBadRequest, "Invalid JSON in request body", "invalid_request_error")
 		return
 	}
 
@@ -99,44 +170,41 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 	}
 	log.Printf("[CHAT] Mapped to Gemini model: %s", model)
 
-	var prompt string
+	// Log messages for debugging
 	for i, msg := range req.Messages {
 		role, _ := msg["role"].(string)
 		content, _ := msg["content"].(string)
-		if content == "" {
-			continue
+		if content != "" {
+			log.Printf("[CHAT] Message %d: role=%s, content=%s", i, role, content[:min(50, len(content))])
 		}
-		log.Printf("[CHAT] Message %d: role=%s, content=%s", i, role, content[:min(50, len(content))])
-		prompt += role + ": " + content + "\n"
 	}
 
-	if prompt == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "No content in messages"})
+	// Build proper Gemini multi-turn conversation format
+	contents, systemInstruction := buildGeminiContents(req.Messages)
+
+	if len(contents) == 0 {
+		writeOpenAIError(w, http.StatusBadRequest, "No content in messages", "invalid_request_error")
 		return
 	}
 
-	log.Printf("[CHAT] Prompt: %s...", prompt[:min(100, len(prompt))])
+	log.Printf("[CHAT] Gemini contents: %d turns, has system instruction: %v", len(contents), systemInstruction != nil)
 
 	geminiReq := map[string]interface{}{
-		"contents": []map[string]interface{}{
-			{
-				"parts": []map[string]interface{}{
-					{"text": prompt},
-				},
-			},
-		},
+		"contents": contents,
 	}
 
-	if req.MaxTokens > 0 || req.Temperature > 0 {
-		genConfig := map[string]interface{}{}
-		if req.MaxTokens > 0 {
-			genConfig["maxOutputTokens"] = req.MaxTokens
-		}
-		if req.Temperature > 0 {
-			genConfig["temperature"] = req.Temperature
-		}
+	if systemInstruction != nil {
+		geminiReq["systemInstruction"] = *systemInstruction
+	}
+
+	genConfig := map[string]interface{}{}
+	if req.MaxTokens > 0 {
+		genConfig["maxOutputTokens"] = req.MaxTokens
+	}
+	if req.Temperature > 0 {
+		genConfig["temperature"] = req.Temperature
+	}
+	if len(genConfig) > 0 {
 		geminiReq["generationConfig"] = genConfig
 	}
 
@@ -148,17 +216,7 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 
 	if err != nil {
 		log.Printf("[CHAT] ForwardRequest error: %v", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Request-Id", randomID(8))
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]interface{}{
-				"message": err.Error(),
-				"type":    "api_error",
-				"code":    500,
-			},
-			"object": "error",
-		})
+		writeOpenAIError(w, http.StatusBadGateway, "Upstream request failed: "+err.Error(), "api_error")
 		return
 	}
 
@@ -177,19 +235,8 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 
 		log.Printf("[CHAT] Gemini error: %s", errMsg)
 
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Request-Id", randomID(8))
-		w.WriteHeader(http.StatusOK)
-
-		errorResp := map[string]interface{}{
-			"error": map[string]interface{}{
-				"message": errMsg,
-				"type":    "api_error",
-				"code":    statusCode,
-			},
-			"object": "error",
-		}
-		json.NewEncoder(w).Encode(errorResp)
+		httpStatus := mapGeminiStatusToHTTP(statusCode)
+		writeOpenAIError(w, httpStatus, errMsg, "api_error")
 		return
 	}
 
@@ -197,108 +244,154 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 
 	h.geminiService.LogRequest(client.ID, model, statusCode, inputTokens, outputTokens, latencyMs, "")
 
-	var geminiResp map[string]interface{}
-	json.Unmarshal(respBody, &geminiResp)
+	// Extract response text from Gemini response
+	responseText := extractGeminiText(respBody)
 
-	choices := make([]map[string]interface{}, 0)
-	if candidates, ok := geminiResp["candidates"].([]interface{}); ok && len(candidates) > 0 {
-		if candidate, ok := candidates[0].(map[string]interface{}); ok {
-			if content, ok := candidate["content"].(map[string]interface{}); ok {
-				if parts, ok := content["parts"].([]interface{}); ok && len(parts) > 0 {
-					if part, ok := parts[0].(map[string]interface{}); ok {
-						if text, ok := part["text"].(string); ok {
-							choices = append(choices, map[string]interface{}{
-								"index":         0,
-								"message":       map[string]string{"role": "assistant", "content": text},
-								"finish_reason": "stop",
-							})
-						}
-					}
-				}
-			}
-		}
-	}
+	responseID := "chatcmpl-" + randomID(12)
+	created := time.Now().Unix()
 
-	if len(choices) == 0 {
-		choices = append(choices, map[string]interface{}{
-			"index":         0,
-			"message":       map[string]string{"role": "assistant", "content": ""},
-			"finish_reason": "stop",
-		})
-	}
-
-	usage := map[string]interface{}{
-		"prompt_tokens":     inputTokens,
-		"completion_tokens": outputTokens,
-		"total_tokens":      inputTokens + outputTokens,
-	}
-
-	response := OpenAIChatResponse{
-		ID:      "chatcmpl-" + randomID(8),
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   req.Model,
-		Choices: choices,
-		Usage:   usage,
-	}
-
-	log.Printf("[CHAT] Sending response: choices=%d, content=%s", len(choices), choices)
+	log.Printf("[CHAT] Sending response: text length=%d", len(responseText))
 
 	if req.Stream {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
-			return
-		}
-
-		for i, choice := range choices {
-			if msg, ok := choice["message"].(map[string]string); ok {
-				chunk := map[string]interface{}{
-					"id":      response.ID,
-					"object":  "chat.completion.chunk",
-					"created": response.Created,
-					"model":   response.Model,
-					"choices": []map[string]interface{}{
-						{
-							"index":         i,
-							"delta":         msg,
-							"finish_reason": choice["finish_reason"],
-						},
-					},
-				}
-				data, _ := json.Marshal(chunk)
-				fmt.Fprintf(w, "data: %s\n\n", data)
-				flusher.Flush()
-			}
-		}
-
-		done := map[string]interface{}{
-			"id":      response.ID,
-			"object":  "chat.completion.chunk",
-			"created": response.Created,
-			"model":   response.Model,
-			"choices": []map[string]interface{}{
-				{"index": 0, "delta": map[string]string{}, "finish_reason": "stop"},
-			},
-		}
-		data, _ := json.Marshal(done)
-		fmt.Fprintf(w, "data: %s\n\n", data)
-		fmt.Fprintf(w, "data: [DONE]\n\n")
-		flusher.Flush()
+		h.writeStreamResponse(w, responseID, req.Model, created, responseText, inputTokens, outputTokens)
 		return
 	}
 
+	// Non-streaming response
+	response := OpenAIChatResponse{
+		ID:      responseID,
+		Object:  "chat.completion",
+		Created: created,
+		Model:   req.Model,
+		Choices: []map[string]interface{}{
+			{
+				"index":         0,
+				"message":       map[string]interface{}{"role": "assistant", "content": responseText},
+				"finish_reason": "stop",
+			},
+		},
+		Usage: map[string]interface{}{
+			"prompt_tokens":     inputTokens,
+			"completion_tokens": outputTokens,
+			"total_tokens":      inputTokens + outputTokens,
+		},
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("openai-organization", "gemini-proxy")
-	w.Header().Set("openai-version", "2020-10-01")
-	w.Header().Set("x-request-id", response.ID)
+	w.Header().Set("x-request-id", responseID)
 	w.Header().Set("openai-processing-ms", fmt.Sprintf("%d", latencyMs))
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
+}
+
+// writeStreamResponse sends the response in OpenAI SSE streaming format.
+// The spec requires: first chunk with role, content chunks with delta text, final chunk with finish_reason.
+func (h *OpenAIHandler) writeStreamResponse(w http.ResponseWriter, id, model string, created int64, text string, inputTokens, outputTokens int) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("x-request-id", id)
+	w.WriteHeader(http.StatusOK)
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		log.Printf("[CHAT] ResponseWriter does not implement http.Flusher, falling back to non-streaming")
+		writeOpenAIError(w, http.StatusInternalServerError, "Streaming not supported", "api_error")
+		return
+	}
+
+	// First chunk: send role
+	roleChunk := map[string]interface{}{
+		"id":      id,
+		"object":  "chat.completion.chunk",
+		"created": created,
+		"model":   model,
+		"choices": []map[string]interface{}{
+			{
+				"index":         0,
+				"delta":         map[string]interface{}{"role": "assistant", "content": ""},
+				"finish_reason": nil,
+			},
+		},
+	}
+	data, _ := json.Marshal(roleChunk)
+	fmt.Fprintf(w, "data: %s\n\n", data)
+	flusher.Flush()
+
+	// Content chunk: send the full text content as a single delta
+	if text != "" {
+		contentChunk := map[string]interface{}{
+			"id":      id,
+			"object":  "chat.completion.chunk",
+			"created": created,
+			"model":   model,
+			"choices": []map[string]interface{}{
+				{
+					"index":         0,
+					"delta":         map[string]interface{}{"content": text},
+					"finish_reason": nil,
+				},
+			},
+		}
+		data, _ = json.Marshal(contentChunk)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	// Final chunk: send finish_reason
+	doneChunk := map[string]interface{}{
+		"id":      id,
+		"object":  "chat.completion.chunk",
+		"created": created,
+		"model":   model,
+		"choices": []map[string]interface{}{
+			{
+				"index":         0,
+				"delta":         map[string]interface{}{},
+				"finish_reason": "stop",
+			},
+		},
+		"usage": map[string]interface{}{
+			"prompt_tokens":     inputTokens,
+			"completion_tokens": outputTokens,
+			"total_tokens":      inputTokens + outputTokens,
+		},
+	}
+	data, _ = json.Marshal(doneChunk)
+	fmt.Fprintf(w, "data: %s\n\n", data)
+	fmt.Fprintf(w, "data: [DONE]\n\n")
+	flusher.Flush()
+}
+
+// extractGeminiText pulls the generated text from a Gemini API response body.
+func extractGeminiText(respBody []byte) string {
+	var geminiResp map[string]interface{}
+	if err := json.Unmarshal(respBody, &geminiResp); err != nil {
+		return ""
+	}
+
+	candidates, ok := geminiResp["candidates"].([]interface{})
+	if !ok || len(candidates) == 0 {
+		return ""
+	}
+	candidate, ok := candidates[0].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	content, ok := candidate["content"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	parts, ok := content["parts"].([]interface{})
+	if !ok || len(parts) == 0 {
+		return ""
+	}
+	part, ok := parts[0].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	text, _ := part["text"].(string)
+	return text
 }
 
 func (h *OpenAIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
@@ -376,7 +469,11 @@ func (h *OpenAIHandler) GetModel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// mapModel resolves the requested model name to an allowed Gemini model.
+// Priority: GPT alias mapping > exact match in allowed list > the model is directly
+// a Gemini model name that we should pass through.
 func (h *OpenAIHandler) mapModel(model string) string {
+	// GPT-to-Gemini aliases for OpenAI client compatibility
 	mappings := map[string]string{
 		"gpt-4":         "gemini-2.0-pro",
 		"gpt-4-turbo":   "gemini-2.0-flash",
@@ -391,20 +488,27 @@ func (h *OpenAIHandler) mapModel(model string) string {
 		return m
 	}
 
-	for _, allowed := range h.geminiService.GetAllowedModels() {
-		if strings.Contains(allowed, model) || strings.Contains(model, allowed) {
-			return allowed
+	allowed := h.geminiService.GetAllowedModels()
+
+	// Exact match against allowed models
+	for _, a := range allowed {
+		if model == a {
+			return model
 		}
+	}
+
+	// If the requested model is a Gemini model name (starts with "gemini-"), pass it
+	// through even if not in the allowed list -- ForwardRequest will fall back to
+	// the default model if it is not allowed.
+	if strings.HasPrefix(model, "gemini-") || strings.HasPrefix(model, "nano-") {
+		return model
 	}
 
 	return ""
 }
 
 func randomID(length int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	b := make([]byte, length)
-	for i := range b {
-		b[i] = charset[i%len(charset)]
-	}
-	return string(b)
+	b := make([]byte, (length+1)/2)
+	rand.Read(b)
+	return hex.EncodeToString(b)[:length]
 }
