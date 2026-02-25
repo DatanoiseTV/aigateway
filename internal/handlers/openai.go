@@ -146,7 +146,52 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 	respBody, statusCode, err := h.geminiService.ForwardRequest(model, geminiBody)
 	latencyMs := int(time.Since(start).Milliseconds())
 
+	if err != nil {
+		log.Printf("[CHAT] ForwardRequest error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-Id", randomID(8))
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]interface{}{
+				"message": err.Error(),
+				"type":    "api_error",
+				"code":    500,
+			},
+			"object": "error",
+		})
+		return
+	}
+
 	log.Printf("[CHAT] Gemini response status: %d, latency: %dms, body: %s", statusCode, latencyMs, string(respBody)[:min(200, len(string(respBody)))])
+
+	if statusCode >= 400 {
+		var geminiErr map[string]interface{}
+		json.Unmarshal(respBody, &geminiErr)
+
+		errMsg := "Gemini API error"
+		if errObj, ok := geminiErr["error"].(map[string]interface{}); ok {
+			if msg, ok := errObj["message"].(string); ok {
+				errMsg = msg
+			}
+		}
+
+		log.Printf("[CHAT] Gemini error: %s", errMsg)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-Id", randomID(8))
+		w.WriteHeader(http.StatusOK)
+
+		errorResp := map[string]interface{}{
+			"error": map[string]interface{}{
+				"message": errMsg,
+				"type":    "api_error",
+				"code":    statusCode,
+			},
+			"object": "error",
+		}
+		json.NewEncoder(w).Encode(errorResp)
+		return
+	}
 
 	inputTokens, outputTokens, _ := services.ParseGeminiResponse(respBody)
 

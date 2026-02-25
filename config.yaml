@@ -13,19 +13,19 @@ gemini:
     api_key: AIzaSyAdd-ThOqp9U4ky_3sGR4jJh220ydXwm1Q
     default_model: gemini-flash-lite-latest
     allowed_models:
-        - models/gemini-2.5-flash
-        - models/gemini-2.5-pro
-        - models/gemini-2.0-flash
-        - models/gemini-2.0-flash-001
-        - models/gemini-2.0-flash-lite-001
-        - models/gemini-2.0-flash-lite
-        - models/gemini-2.5-flash-lite
-        - models/gemini-2.5-flash-preview-tts
-        - models/gemini-2.5-pro-preview-tts
-        - models/gemini-flash-latest
-        - models/gemini-pro-latest
-        - models/gemini-3-pro-preview
-        - models/gemini-3.1-pro-preview
+        - gemini-2.5-flash
+        - gemini-2.5-pro
+        - gemini-2.0-flash
+        - gemini-2.0-flash-lite
+        - gemini-2.5-flash-lite
+        - gemini-flash-latest
+        - gemini-flash-lite-latest
+        - gemini-pro-latest
+        - gemini-2.5-flash-image
+        - gemini-2.5-flash-lite-preview-09-2025
+        - gemini-3-pro-preview
+        - gemini-3-flash-preview
+        - gemini-3.1-pro-preview
     timeout_seconds: 120
 defaults:
     rate_limit:
