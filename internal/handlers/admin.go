@@ -814,6 +814,7 @@ var adminTemplates = []byte(`
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-700">
+                    {{$root := .}}
                     {{range .Data.Clients}}
                     <tr class="hover:bg-gray-700/50 transition-colors">
                         <td class="px-6 py-4">
@@ -837,30 +838,30 @@ var adminTemplates = []byte(`
                         <td class="px-6 py-4">
                             <div class="flex items-center space-x-2">
                                 <div class="w-24 bg-gray-700 rounded-full h-2">
-                                    <div class="bg-blue-500 h-2 rounded-full" style="width: {{with (index (index .Data "ClientStats") .ID)}}{{percentUsed .RequestsToday .RequestsLimit}}{{else}}0{{end}}%"></div>
+                                    <div class="bg-blue-500 h-2 rounded-full" style="width: {{with (index $root.Data.ClientStats .ID)}}{{percentUsed .RequestsToday .RequestsLimit}}{{else}}0{{end}}%"></div>
                                 </div>
                                 <span class="text-gray-400 text-sm">
-                                    {{with (index (index .Data "ClientStats") .ID)}}{{.RequestsToday}}{{else}}0{{end}} / {{.QuotaRequestsDay}}
+                                    {{with (index $root.Data.ClientStats .ID)}}{{.RequestsToday}}{{else}}0{{end}} / {{.QuotaRequestsDay}}
                                 </span>
                             </div>
                         </td>
                         <td class="px-6 py-4">
                             <div class="flex items-center space-x-2">
                                 <div class="w-24 bg-gray-700 rounded-full h-2">
-                                    <div class="bg-green-500 h-2 rounded-full" style="width: {{with (index (index .Data "ClientStats") .ID)}}{{percentUsed .InputTokensToday .InputTokensLimit}}{{else}}0{{end}}%"></div>
+                                    <div class="bg-green-500 h-2 rounded-full" style="width: {{with (index $root.Data.ClientStats .ID)}}{{percentUsed .InputTokensToday .InputTokensLimit}}{{else}}0{{end}}%"></div>
                                 </div>
                                 <span class="text-gray-400 text-sm">
-                                    {{with (index (index .Data "ClientStats") .ID)}}{{.InputTokensToday}}{{else}}0{{end}} / {{.QuotaInputTokensDay}}
+                                    {{with (index $root.Data.ClientStats .ID)}}{{.InputTokensToday}}{{else}}0{{end}} / {{.QuotaInputTokensDay}}
                                 </span>
                             </div>
                         </td>
                         <td class="px-6 py-4">
                             <div class="flex items-center space-x-2">
                                 <div class="w-24 bg-gray-700 rounded-full h-2">
-                                    <div class="bg-purple-500 h-2 rounded-full" style="width: {{with (index (index .Data "ClientStats") .ID)}}{{percentUsed .OutputTokensToday .OutputTokensLimit}}{{else}}0{{end}}%"></div>
+                                    <div class="bg-purple-500 h-2 rounded-full" style="width: {{with (index $root.Data.ClientStats .ID)}}{{percentUsed .OutputTokensToday .OutputTokensLimit}}{{else}}0{{end}}%"></div>
                                 </div>
                                 <span class="text-gray-400 text-sm">
-                                    {{with (index (index .Data "ClientStats") .ID)}}{{.OutputTokensToday}}{{else}}0{{end}} / {{.QuotaOutputTokensDay}}
+                                    {{with (index $root.Data.ClientStats .ID)}}{{.OutputTokensToday}}{{else}}0{{end}} / {{.QuotaOutputTokensDay}}
                                 </span>
                             </div>
                         </td>
