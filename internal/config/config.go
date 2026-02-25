@@ -85,7 +85,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	if cfg.Server.Port == 0 {
-		cfg.Server.Port = 8080
+		cfg.Server.Port = 8090
 	}
 
 	if cfg.Gemini.TimeoutSeconds == 0 {
@@ -115,7 +115,7 @@ func createDefaultConfig(path string) (*Config, error) {
 	cfg := &Config{
 		Server: ServerConfig{
 			Host: "0.0.0.0",
-			Port: 8080,
+			Port: 8090,
 			HTTPS: HTTPSConfig{
 				Enabled: false,
 			},

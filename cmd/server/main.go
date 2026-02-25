@@ -31,6 +31,7 @@ var (
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config file")
+	port := flag.Int("port", 0, "Port to listen on (overrides config)")
 	flag.Parse()
 
 	printBanner()
@@ -88,7 +89,12 @@ func main() {
 		w.Write([]byte("OK"))
 	})
 
-	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
+	serverPort := cfg.Server.Port
+	if *port > 0 {
+		serverPort = *port
+	}
+
+	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, serverPort)
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      router,

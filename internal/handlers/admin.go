@@ -32,8 +32,10 @@ type PageData struct {
 
 func NewAdminHandler(cfg *config.Config, clientService *services.ClientService, statsService *services.StatsService) (*AdminHandler, error) {
 	tmpl := template.New("admin").Funcs(template.FuncMap{
-		"formatDate": formatDate,
-		"formatInt":  formatInt,
+		"formatDate":     formatDate,
+		"formatInt":      formatInt,
+		"formatDuration": formatDuration,
+		"percentUsed":    percentUsed,
 	})
 
 	tmpl, err := tmpl.Parse(string(adminTemplates))
@@ -70,7 +72,10 @@ func (h *AdminHandler) RegisterRoutes(r *chi.Mux) {
 		r.Post("/admin/clients/{id}/update", h.UpdateClient)
 		r.Post("/admin/clients/{id}/delete", h.DeleteClient)
 		r.Post("/admin/clients/{id}/regenerate", h.RegenerateKey)
-		r.Get("/admin/stats", h.GetStats)
+		r.Post("/admin/clients/{id}/toggle", h.ToggleClient)
+		r.Get("/admin/settings", h.ShowSettings)
+		r.Post("/admin/settings", h.UpdateSettings)
+		r.Get("/admin/stats/api", h.GetAPISTats)
 	})
 }
 
@@ -140,13 +145,8 @@ func (h *AdminHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AdminHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
-	stats, err := h.statsService.GetGlobalStats()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	recentLogs, _ := h.statsService.GetRecentRequests("", 10)
+	stats, _ := h.statsService.GetGlobalStats()
+	recentLogs, _ := h.statsService.GetRecentRequests("", 20)
 	modelUsage, _ := h.statsService.GetModelUsage()
 
 	h.render(w, "dashboard.html", PageData{
@@ -156,17 +156,14 @@ func (h *AdminHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 			"Stats":      stats,
 			"RecentLogs": recentLogs,
 			"ModelUsage": modelUsage,
+			"GeminiKey":  h.cfg.Gemini.APIKey != "",
+			"Models":     h.cfg.Gemini.AllowedModels,
 		},
 	})
 }
 
 func (h *AdminHandler) ListClients(w http.ResponseWriter, r *http.Request) {
-	clients, err := h.clientService.GetAllClients()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
+	clients, _ := h.clientService.GetAllClients()
 	clientStats, _ := h.statsService.GetAllClientStats()
 
 	statsMap := make(map[string]models.ClientStats)
@@ -220,7 +217,7 @@ func (h *AdminHandler) ShowClient(w http.ResponseWriter, r *http.Request) {
 	}
 
 	clientStats, _ := h.statsService.GetClientStats(id)
-	recentLogs, _ := h.statsService.GetRecentRequests(id, 20)
+	recentLogs, _ := h.statsService.GetRecentRequests(id, 50)
 
 	h.render(w, "client_detail.html", PageData{
 		Title: client.Name,
@@ -272,6 +269,21 @@ func (h *AdminHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/clients/"+id, http.StatusFound)
 }
 
+func (h *AdminHandler) ToggleClient(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	client, err := h.clientService.GetClientByID(id)
+	if err != nil || client == nil {
+		http.Error(w, "Client not found", http.StatusNotFound)
+		return
+	}
+
+	client.IsActive = !client.IsActive
+	h.clientService.UpdateClient(client)
+
+	http.Redirect(w, r, "/admin/clients/"+id, http.StatusFound)
+}
+
 func (h *AdminHandler) DeleteClient(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
@@ -306,7 +318,26 @@ func (h *AdminHandler) RegenerateKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *AdminHandler) GetStats(w http.ResponseWriter, r *http.Request) {
+func (h *AdminHandler) ShowSettings(w http.ResponseWriter, r *http.Request) {
+	h.render(w, "settings.html", PageData{
+		Title: "Settings",
+		User:  h.cfg.Admin.Username,
+		Data: map[string]interface{}{
+			"Config": h.cfg,
+		},
+	})
+}
+
+func (h *AdminHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+
+	h.cfg.Gemini.APIKey = r.Form.Get("gemini_api_key")
+	h.cfg.Gemini.DefaultModel = r.Form.Get("default_model")
+
+	http.Redirect(w, r, "/admin/settings?success=true", http.StatusFound)
+}
+
+func (h *AdminHandler) GetAPISTats(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.statsService.GetGlobalStats()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -326,7 +357,14 @@ func (h *AdminHandler) render(w http.ResponseWriter, name string, data PageData)
 }
 
 func formatDate(t time.Time) string {
-	return t.Format("2006-01-02 15:04:05")
+	return t.Format("Jan 02, 2006 15:04")
+}
+
+func formatDuration(ms int) string {
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	return fmt.Sprintf("%.1fs", float64(ms)/1000)
 }
 
 func formatInt(n int) string {
@@ -334,6 +372,13 @@ func formatInt(n int) string {
 		return "0"
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+func percentUsed(used, limit int) int {
+	if limit == 0 {
+		return 0
+	}
+	return (used * 100) / limit
 }
 
 func parseInt(s string, def int) int {
@@ -353,24 +398,55 @@ var adminTemplates = []byte(`
 <!DOCTYPE html>
 <html>
 <head>
-    <title>{{.Title}} - Gemini Proxy</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Login - Gemini Proxy</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+    </style>
 </head>
-<body class="bg-gray-900 min-h-screen flex items-center justify-center">
-    <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-96">
-        <h1 class="text-2xl font-bold text-white mb-6 text-center">Admin Login</h1>
-        <form method="POST" action="/admin/login">
-            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-            <div class="mb-4">
-                <label class="block text-gray-300 text-sm font-bold mb-2">Username</label>
-                <input type="text" name="username" class="w-full px-3 py-2 bg-gray-700 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+<body class="bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 min-h-screen flex items-center justify-center">
+    <div class="w-full max-w-md">
+        <div class="text-center mb-8">
+            <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-600 mb-4">
+                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                </svg>
             </div>
-            <div class="mb-6">
-                <label class="block text-gray-300 text-sm font-bold mb-2">Password</label>
-                <input type="password" name="password" class="w-full px-3 py-2 bg-gray-700 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
-            </div>
-            <button type="submit" class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded hover:bg-blue-700">Login</button>
-        </form>
+            <h1 class="text-3xl font-bold text-white">Gemini Proxy</h1>
+            <p class="text-gray-400 mt-2">Sign in to your admin account</p>
+        </div>
+        
+        <div class="bg-gray-800/50 backdrop-blur-sm border border-gray-700 rounded-2xl p-8">
+            <form method="POST" action="/admin/login">
+                <input type="hidden" name="csrf_token" value="{{.">
+                
+                <div class="mbCSRFToken}}-6">
+                    <label class="block text-gray-300 text-sm font-medium mb-2">Username</label>
+                    <input type="text" name="username" placeholder="admin" 
+                        class="w-full px-4 py-3 bg-gray-900/50 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
+                </div>
+                
+                <div class="mb-8">
+                    <label class="block text-gray-300 text-sm font-medium mb-2">Password</label>
+                    <input type="password" name="password" placeholder="Enter password"
+                        class="w-full px-4 py-3 bg-gray-900/50 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
+                </div>
+                
+                <button type="submit" 
+                    class="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white font-semibold py-3 px-4 rounded-xl hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900 transition-all">
+                    Sign In
+                </button>
+            </form>
+        </div>
+        
+        <p class="text-center text-gray-500 text-sm mt-6">
+            Gemini Proxy Gateway
+        </p>
     </div>
 </body>
 </html>
@@ -380,76 +456,186 @@ var adminTemplates = []byte(`
 <!DOCTYPE html>
 <html>
 <head>
-    <title>{{.Title}} - Gemini Proxy</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dashboard - Gemini Proxy</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>body { font-family: 'Inter', sans-serif; }</style>
 </head>
 <body class="bg-gray-900 min-h-screen">
-    <nav class="bg-gray-800 border-b border-gray-700">
-        <div class="max-w-7xl mx-auto px-4">
+    <!-- Top Navigation -->
+    <nav class="bg-gray-800/80 backdrop-blur-md border-b border-gray-700 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex items-center justify-between h-16">
-                <div class="flex items-center">
+                <div class="flex items-center space-x-3">
+                    <div class="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center">
+                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                        </svg>
+                    </div>
                     <span class="text-xl font-bold text-white">Gemini Proxy</span>
                 </div>
-                <div class="flex items-center space-x-4">
-                    <a href="/admin/dashboard" class="text-gray-300 hover:text-white">Dashboard</a>
-                    <a href="/admin/clients" class="text-gray-300 hover:text-white">Clients</a>
-                    <form method="POST" action="/admin/logout" class="inline">
-                        <button type="submit" class="text-gray-300 hover:text-white">Logout</button>
+                
+                <div class="flex items-center space-x-1">
+                    <a href="/admin/dashboard" class="px-3 py-2 rounded-lg text-sm font-medium text-white bg-gray-700">Dashboard</a>
+                    <a href="/admin/clients" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Clients</a>
+                    <a href="/admin/settings" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Settings</a>
+                    <form method="POST" action="/admin/logout" class="ml-2">
+                        <button type="submit" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                            </svg>
+                        </button>
                     </form>
                 </div>
             </div>
         </div>
     </nav>
-    
-    <div class="max-w-7xl mx-auto px-4 py-8">
-        <h1 class="text-3xl font-bold text-white mb-8">Dashboard</h1>
-        
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-            <div class="bg-gray-800 rounded-lg p-6">
-                <div class="text-gray-400 text-sm">Requests Today</div>
-                <div class="text-3xl font-bold text-white">{{(index .Data "Stats").TotalRequestsToday}}</div>
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Status Banner -->
+        {{if not (index .Data "GeminiKey")}}
+        <div class="mb-6 bg-amber-500/10 border border-amber-500/50 rounded-xl p-4 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                </svg>
+                <span class="text-amber-400 font-medium">Gemini API key not configured</span>
             </div>
-            <div class="bg-gray-800 rounded-lg p-6">
-                <div class="text-gray-400 text-sm">Input Tokens</div>
-                <div class="text-3xl font-bold text-white">{{formatInt (index .Data "Stats").TotalInputTokensToday}}</div>
+            <a href="/admin/settings" class="text-sm text-amber-400 hover:text-amber-300 font-medium">Configure now →</a>
+        </div>
+        {{end}}
+
+        <!-- Stats Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-400 text-sm font-medium">Total Requests</p>
+                        <p class="text-3xl font-bold text-white mt-1">{{(index .Data "Stats").TotalRequestsToday}}</p>
+                    </div>
+                    <div class="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center">
+                        <svg class="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                        </svg>
+                    </div>
+                </div>
             </div>
-            <div class="bg-gray-800 rounded-lg p-6">
-                <div class="text-gray-400 text-sm">Output Tokens</div>
-                <div class="text-3xl font-bold text-white">{{formatInt (index .Data "Stats").TotalOutputTokensToday}}</div>
+            
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-400 text-sm font-medium">Input Tokens</p>
+                        <p class="text-3xl font-bold text-white mt-1">{{formatInt (index .Data "Stats").TotalInputTokensToday}}</p>
+                    </div>
+                    <div class="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center">
+                        <svg class="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                        </svg>
+                    </div>
+                </div>
             </div>
-            <div class="bg-gray-800 rounded-lg p-6">
-                <div class="text-gray-400 text-sm">Active Clients</div>
-                <div class="text-3xl font-bold text-white">{{(index .Data "Stats").ActiveClients}}</div>
+            
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-400 text-sm font-medium">Output Tokens</p>
+                        <p class="text-3xl font-bold text-white mt-1">{{formatInt (index .Data "Stats").TotalOutputTokensToday}}</p>
+                    </div>
+                    <div class="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center">
+                        <svg class="w-6 h-6 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-400 text-sm font-medium">Active Clients</p>
+                        <p class="text-3xl font-bold text-white mt-1">{{(index .Data "Stats").ActiveClients}} <span class="text-lg text-gray-500">/ {{(index .Data "Stats").TotalClients}}</span></p>
+                    </div>
+                    <div class="w-12 h-12 bg-emerald-500/20 rounded-xl flex items-center justify-center">
+                        <svg class="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+                        </svg>
+                    </div>
+                </div>
             </div>
         </div>
-        
-        <div class="bg-gray-800 rounded-lg p-6 mb-8">
-            <h2 class="text-xl font-bold text-white mb-4">Model Usage Today</h2>
-            <canvas id="modelChart" height="100"></canvas>
+
+        <!-- Charts Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <h3 class="text-lg font-semibold text-white mb-4">Model Usage</h3>
+                <canvas id="modelChart" height="200"></canvas>
+            </div>
+            
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <h3 class="text-lg font-semibold text-white mb-4">System Status</h3>
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between p-4 bg-gray-900/50 rounded-xl">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                            <span class="text-gray-300">Server Status</span>
+                        </div>
+                        <span class="text-green-400 font-medium">Online</span>
+                    </div>
+                    <div class="flex items-center justify-between p-4 bg-gray-900/50 rounded-xl">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-3 h-3 {{if (index .Data "GeminiKey")}}bg-green-500{{else}}bg-red-500{{end}} rounded-full"></div>
+                            <span class="text-gray-300">Gemini API</span>
+                        </div>
+                        <span class="{{if (index .Data "GeminiKey")}}text-green-400{{else}}text-red-400{{end}} font-medium">{{if (index .Data "GeminiKey")}}Connected{{else}}Not Configured{{end}}</span>
+                    </div>
+                    <div class="flex items-center justify-between p-4 bg-gray-900/50 rounded-xl">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-3 h-3 bg-green-500 rounded-full"></div>
+                            <span class="text-gray-300">Database</span>
+                        </div>
+                        <span class="text-green-400 font-medium">Connected</span>
+                    </div>
+                </div>
+            </div>
         </div>
-        
-        <div class="bg-gray-800 rounded-lg p-6">
-            <h2 class="text-xl font-bold text-white mb-4">Recent Requests</h2>
+
+        <!-- Recent Requests -->
+        <div class="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-700">
+                <h3 class="text-lg font-semibold text-white">Recent Requests</h3>
+            </div>
             <div class="overflow-x-auto">
-                <table class="w-full text-left">
-                    <thead>
-                        <tr class="text-gray-400 border-b border-gray-700">
-                            <th class="py-3">Time</th>
-                            <th class="py-3">Client</th>
-                            <th class="py-3">Model</th>
-                            <th class="py-3">Status</th>
-                            <th class="py-3">Tokens</th>
+                <table class="w-full">
+                    <thead class="bg-gray-900/50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Time</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Client</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Model</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Tokens</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Latency</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody class="divide-y divide-gray-700">
                         {{range (index .Data "RecentLogs")}}
-                        <tr class="border-b border-gray-700 text-gray-300">
-                            <td class="py-3">{{formatDate .CreatedAt}}</td>
-                            <td class="py-3">{{.ClientID}}</td>
-                            <td class="py-3">{{.Model}}</td>
-                            <td class="py-3 {{if ge .StatusCode 400}}text-red-400{{else}}text-green-400{{end}}">{{.StatusCode}}</td>
-                            <td class="py-3">{{.InputTokens}} / {{.OutputTokens}}</td>
+                        <tr class="hover:bg-gray-700/50 transition-colors">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">{{formatDate .CreatedAt}}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300 font-mono">{{.ClientID}}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">{{.Model}}</td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="px-2 py-1 text-xs font-medium rounded-full {{if ge .StatusCode 400}}bg-red-500/20 text-red-400{{else}}bg-green-500/20 text-green-400{{end}}">
+                                    {{.StatusCode}}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">{{.InputTokens}} / {{.OutputTokens}}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">{{.LatencyMs}}ms</td>
+                        </tr>
+                        {{else}}
+                        <tr>
+                            <td colspan="6" class="px-6 py-8 text-center text-gray-500">No requests yet</td>
                         </tr>
                         {{end}}
                     </tbody>
@@ -462,11 +648,28 @@ var adminTemplates = []byte(`
         const modelUsage = {{(index .Data "ModelUsage")}};
         const labels = Object.keys(modelUsage);
         const data = Object.values(modelUsage);
-        new Chart(document.getElementById('modelChart'), {
-            type: 'bar',
-            data: { labels: labels, datasets: [{ label: 'Requests', data: data, backgroundColor: '#3B82F6' }] },
-            options: { responsive: true, scales: { y: { beginAtZero: true, ticks: { color: '#9CA3AF' } }, x: { ticks: { color: '#9CA3AF' } } } }
-        });
+        
+        if (labels.length > 0) {
+            new Chart(document.getElementById('modelChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#EC4899'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'right', labels: { color: '#9CA3AF' } }
+                    }
+                }
+            });
+        } else {
+            document.getElementById('modelChart').parentElement.innerHTML = '<div class="text-gray-500 text-center py-8">No usage data yet</div>';
+        }
     </script>
 </body>
 </html>
@@ -476,77 +679,135 @@ var adminTemplates = []byte(`
 <!DOCTYPE html>
 <html>
 <head>
-    <title>{{.Title}} - Gemini Proxy</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Clients - Gemini Proxy</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>body { font-family: 'Inter', sans-serif; }</style>
 </head>
 <body class="bg-gray-900 min-h-screen">
-    <nav class="bg-gray-800 border-b border-gray-700">
-        <div class="max-w-7xl mx-auto px-4">
+    <nav class="bg-gray-800/80 backdrop-blur-md border-b border-gray-700 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex items-center justify-between h-16">
-                <div class="flex items-center">
+                <div class="flex items-center space-x-3">
+                    <div class="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center">
+                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                        </svg>
+                    </div>
                     <span class="text-xl font-bold text-white">Gemini Proxy</span>
                 </div>
-                <div class="flex items-center space-x-4">
-                    <a href="/admin/dashboard" class="text-gray-300 hover:text-white">Dashboard</a>
-                    <a href="/admin/clients" class="text-gray-300 hover:text-white">Clients</a>
-                    <form method="POST" action="/admin/logout" class="inline">
-                        <button type="submit" class="text-gray-300 hover:text-white">Logout</button>
+                <div class="flex items-center space-x-1">
+                    <a href="/admin/dashboard" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Dashboard</a>
+                    <a href="/admin/clients" class="px-3 py-2 rounded-lg text-sm font-medium text-white bg-gray-700">Clients</a>
+                    <a href="/admin/settings" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Settings</a>
+                    <form method="POST" action="/admin/logout" class="ml-2">
+                        <button type="submit" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                            </svg>
+                        </button>
                     </form>
                 </div>
             </div>
         </div>
     </nav>
-    
-    <div class="max-w-7xl mx-auto px-4 py-8">
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div class="flex justify-between items-center mb-8">
-            <h1 class="text-3xl font-bold text-white">Clients</h1>
-            <button onclick="document.getElementById('createModal').classList.remove('hidden')" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">New Client</button>
+            <div>
+                <h1 class="text-3xl font-bold text-white">Clients</h1>
+                <p class="text-gray-400 mt-1">Manage API clients and their quotas</p>
+            </div>
+            <button onclick="document.getElementById('createModal').classList.remove('hidden')" 
+                class="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-5 py-2.5 rounded-xl font-medium hover:from-blue-700 hover:to-blue-800 transition-all flex items-center space-x-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                </svg>
+                <span>New Client</span>
+            </button>
         </div>
-        
-        <div class="bg-gray-800 rounded-lg overflow-hidden">
-            <table class="w-full text-left">
-                <thead class="bg-gray-700">
+
+        <div class="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
+            <table class="w-full">
+                <thead class="bg-gray-900/50">
                     <tr>
-                        <th class="px-6 py-3 text-gray-300">Name</th>
-                        <th class="px-6 py-3 text-gray-300">Status</th>
-                        <th class="px-6 py-3 text-gray-300">Requests Today</th>
-                        <th class="px-6 py-3 text-gray-300">Input Tokens</th>
-                        <th class="px-6 py-3 text-gray-300">Output Tokens</th>
-                        <th class="px-6 py-3 text-gray-300">Created</th>
-                        <th class="px-6 py-3 text-gray-300">Actions</th>
+                        <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Client</th>
+                        <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
+                        <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Requests</th>
+                        <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Input Tokens</th>
+                        <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Output Tokens</th>
+                        <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Created</th>
+                        <th class="px-6 py-4 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody class="divide-y divide-gray-700">
                     {{range .Data.Clients}}
-                    <tr class="border-b border-gray-700">
-                        <td class="px-6 py-4 text-white">
-                            <a href="/admin/clients/{{.ID}}" class="hover:text-blue-400">{{.Name}}</a>
+                    <tr class="hover:bg-gray-700/50 transition-colors">
+                        <td class="px-6 py-4">
+                            <a href="/admin/clients/{{.ID}}" class="flex items-center space-x-3">
+                                <div class="w-10 h-10 bg-gradient-to-br from-blue-500/20 to-purple-500/20 rounded-xl flex items-center justify-center">
+                                    <span class="text-blue-400 font-semibold">{{slice .Name 0 1}}</span>
+                                </div>
+                                <div>
+                                    <div class="text-white font-medium">{{.Name}}</div>
+                                    <div class="text-gray-500 text-sm">{{.Description}}</div>
+                                </div>
+                            </a>
                         </td>
                         <td class="px-6 py-4">
-                            {{if .IsActive}}
-                            <span class="text-green-400">Active</span>
-                            {{else}}
-                            <span class="text-red-400">Disabled</span>
-                            {{end}}
+                            <form method="POST" action="/admin/clients/{{.ID}}/toggle">
+                                <button type="submit" class="px-3 py-1 text-xs font-medium rounded-full {{if .IsActive}}bg-green-500/20 text-green-400{{else}}bg-red-500/20 text-red-400{{end}} hover:opacity-80 transition-opacity">
+                                    {{if .IsActive}}Active{{else}}Disabled{{end}}
+                                </button>
+                            </form>
                         </td>
-                        <td class="px-6 py-4 text-gray-300">
-                            {{with (index (index .Data "ClientStats") .ID)}}
-                            {{.RequestsToday}} / {{.RequestsLimit}}
-                            {{else}}0 / {{.QuotaRequestsDay}}{{end}}
-                        </td>
-                        <td class="px-6 py-4 text-gray-300">
-                            {{with (index (index .Data "ClientStats") .ID)}}
-                            {{.InputTokensToday}} / {{.InputTokensLimit}}
-                            {{else}}0 / {{.QuotaInputTokensDay}}{{end}}
-                        </td>
-                        <td class="px-6 py-4 text-gray-300">
-                            {{with (index (index .Data "ClientStats") .ID)}}
-                            {{.OutputTokensToday}} / {{.OutputTokensLimit}}
-                            {{else}}0 / {{.QuotaOutputTokensDay}}{{end}}
-                        </td>
-                        <td class="px-6 py-4 text-gray-300">{{formatDate .CreatedAt}}</td>
                         <td class="px-6 py-4">
-                            <a href="/admin/clients/{{.ID}}" class="text-blue-400 hover:text-blue-300">View</a>
+                            <div class="flex items-center space-x-2">
+                                <div class="w-24 bg-gray-700 rounded-full h-2">
+                                    <div class="bg-blue-500 h-2 rounded-full" style="width: {{with (index (index .Data "ClientStats") .ID)}}{{percentUsed .RequestsToday .RequestsLimit}}{{else}}0{{end}}%"></div>
+                                </div>
+                                <span class="text-gray-400 text-sm">
+                                    {{with (index (index .Data "ClientStats") .ID)}}{{.RequestsToday}}{{else}}0{{end}} / {{.QuotaRequestsDay}}
+                                </span>
+                            </div>
+                        </td>
+                        <td class="px-6 py-4">
+                            <div class="flex items-center space-x-2">
+                                <div class="w-24 bg-gray-700 rounded-full h-2">
+                                    <div class="bg-green-500 h-2 rounded-full" style="width: {{with (index (index .Data "ClientStats") .ID)}}{{percentUsed .InputTokensToday .InputTokensLimit}}{{else}}0{{end}}%"></div>
+                                </div>
+                                <span class="text-gray-400 text-sm">
+                                    {{with (index (index .Data "ClientStats") .ID)}}{{.InputTokensToday}}{{else}}0{{end}} / {{.QuotaInputTokensDay}}
+                                </span>
+                            </div>
+                        </td>
+                        <td class="px-6 py-4">
+                            <div class="flex items-center space-x-2">
+                                <div class="w-24 bg-gray-700 rounded-full h-2">
+                                    <div class="bg-purple-500 h-2 rounded-full" style="width: {{with (index (index .Data "ClientStats") .ID)}}{{percentUsed .OutputTokensToday .OutputTokensLimit}}{{else}}0{{end}}%"></div>
+                                </div>
+                                <span class="text-gray-400 text-sm">
+                                    {{with (index (index .Data "ClientStats") .ID)}}{{.OutputTokensToday}}{{else}}0{{end}} / {{.QuotaOutputTokensDay}}
+                                </span>
+                            </div>
+                        </td>
+                        <td class="px-6 py-4 text-gray-400 text-sm">{{formatDate .CreatedAt}}</td>
+                        <td class="px-6 py-4 text-right">
+                            <a href="/admin/clients/{{.ID}}" class="text-blue-400 hover:text-blue-300 font-medium">Manage</a>
+                        </td>
+                    </tr>
+                    {{else}}
+                    <tr>
+                        <td colspan="7" class="px-6 py-12 text-center">
+                            <div class="flex flex-col items-center">
+                                <svg class="w-12 h-12 text-gray-600 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                </svg>
+                                <p class="text-gray-500">No clients yet</p>
+                                <button onclick="document.getElementById('createModal').classList.remove('hidden')" class="mt-2 text-blue-400 hover:text-blue-300 font-medium">Create your first client</button>
+                            </div>
                         </td>
                     </tr>
                     {{end}}
@@ -555,21 +816,29 @@ var adminTemplates = []byte(`
         </div>
     </div>
     
-    <div id="createModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-        <div class="bg-gray-800 p-6 rounded-lg w-96">
-            <h2 class="text-xl font-bold text-white mb-4">Create New Client</h2>
+    <!-- Create Modal -->
+    <div id="createModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 border border-gray-700 rounded-2xl w-full max-w-md p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold text-white">Create New Client</h2>
+                <button onclick="document.getElementById('createModal').classList.add('hidden')" class="text-gray-400 hover:text-white">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
             <form method="POST" action="/admin/clients">
                 <div class="mb-4">
-                    <label class="block text-gray-300 text-sm font-bold mb-2">Name</label>
-                    <input type="text" name="name" class="w-full px-3 py-2 bg-gray-700 text-white rounded">
+                    <label class="block text-gray-300 text-sm font-medium mb-2">Name</label>
+                    <input type="text" name="name" required placeholder="My App" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
-                <div class="mb-4">
-                    <label class="block text-gray-300 text-sm font-bold mb-2">Description</label>
-                    <textarea name="description" class="w-full px-3 py-2 bg-gray-700 text-white rounded"></textarea>
+                <div class="mb-6">
+                    <label class="block text-gray-300 text-sm font-medium mb-2">Description</label>
+                    <textarea name="description" placeholder="Optional description" rows="2" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
                 </div>
-                <div class="flex justify-end space-x-2">
-                    <button type="button" onclick="document.getElementById('createModal').classList.add('hidden')" class="px-4 py-2 text-gray-300 hover:text-white">Cancel</button>
-                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Create</button>
+                <div class="flex space-x-3">
+                    <button type="button" onclick="document.getElementById('createModal').classList.add('hidden')" class="flex-1 px-4 py-3 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition-colors">Cancel</button>
+                    <button type="submit" class="flex-1 px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors">Create Client</button>
                 </div>
             </form>
         </div>
@@ -582,115 +851,213 @@ var adminTemplates = []byte(`
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{.Title}} - Gemini Proxy</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>body { font-family: 'Inter', sans-serif; }</style>
 </head>
 <body class="bg-gray-900 min-h-screen">
-    <nav class="bg-gray-800 border-b border-gray-700">
-        <div class="max-w-7xl mx-auto px-4">
+    <nav class="bg-gray-800/80 backdrop-blur-md border-b border-gray-700 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex items-center justify-between h-16">
-                <div class="flex items-center">
-                    <span class="text-xl font-bold text-white">Gemini Proxy</span>
+                <div class="flex items-center space-x-3">
+                    <a href="/admin/clients" class="text-gray-400 hover:text-white">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                        </svg>
+                    </a>
+                    <div class="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center">
+                        <span class="text-white font-semibold text-sm">{{slice (index .Data "Client").Name 0 1}}</span>
+                    </div>
+                    <span class="text-xl font-bold text-white">{{(index .Data "Client").Name}}</span>
+                    {{if (index .Data "Client").IsActive}}
+                    <span class="px-2 py-0.5 text-xs font-medium bg-green-500/20 text-green-400 rounded-full">Active</span>
+                    {{else}}
+                    <span class="px-2 py-0.5 text-xs font-medium bg-red-500/20 text-red-400 rounded-full">Disabled</span>
+                    {{end}}
                 </div>
-                <div class="flex items-center space-x-4">
-                    <a href="/admin/dashboard" class="text-gray-300 hover:text-white">Dashboard</a>
-                    <a href="/admin/clients" class="text-gray-300 hover:text-white">Clients</a>
-                    <form method="POST" action="/admin/logout" class="inline">
-                        <button type="submit" class="text-gray-300 hover:text-white">Logout</button>
+                <div class="flex items-center space-x-1">
+                    <a href="/admin/dashboard" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Dashboard</a>
+                    <a href="/admin/clients" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Clients</a>
+                    <a href="/admin/settings" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Settings</a>
+                    <form method="POST" action="/admin/logout" class="ml-2">
+                        <button type="submit" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                            </svg>
+                        </button>
                     </form>
                 </div>
             </div>
         </div>
     </nav>
-    
-    <div class="max-w-7xl mx-auto px-4 py-8">
-        <div class="flex justify-between items-center mb-8">
-            <h1 class="text-3xl font-bold text-white">{{(index .Data "Client").Name}}</h1>
-            <div class="space-x-2">
-                <form method="POST" action="/admin/clients/{{(index .Data "Client").ID}}/regenerate" class="inline">
-                    <button type="submit" class="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700">Regenerate Key</button>
-                </form>
-                <form method="POST" action="/admin/clients/{{(index .Data "Client").ID}}/delete" class="inline" onsubmit="return confirm('Are you sure?')">
-                    <button type="submit" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">Delete</button>
-                </form>
-            </div>
-        </div>
-        
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Stats Cards -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <div class="bg-gray-800 rounded-lg p-6">
-                <div class="text-gray-400 text-sm">Requests Today</div>
-                <div class="text-3xl font-bold text-white">{{(index .Data "Stats").RequestsToday}} / {{(index .Data "Stats").RequestsLimit}}</div>
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-gray-400 text-sm font-medium">Requests Today</h3>
+                    <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                </div>
+                <p class="text-3xl font-bold text-white">{{(index .Data "Stats").RequestsToday}}</p>
+                <div class="mt-2 bg-gray-700 rounded-full h-2">
+                    <div class="bg-blue-500 h-2 rounded-full transition-all" style="width: {{percentUsed (index .Data "Stats").RequestsToday (index .Data "Stats").RequestsLimit}}%"></div>
+                </div>
+                <p class="text-gray-500 text-sm mt-1">{{(index .Data "Stats").RequestsLimit}} daily limit</p>
             </div>
-            <div class="bg-gray-800 rounded-lg p-6">
-                <div class="text-gray-400 text-sm">Input Tokens</div>
-                <div class="text-3xl font-bold text-white">{{formatInt (index .Data "Stats").InputTokensToday}} / {{(index .Data "Stats").InputTokensLimit}}</div>
+            
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-gray-400 text-sm font-medium">Input Tokens</h3>
+                    <svg class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                    </svg>
+                </div>
+                <p class="text-3xl font-bold text-white">{{formatInt (index .Data "Stats").InputTokensToday}}</p>
+                <div class="mt-2 bg-gray-700 rounded-full h-2">
+                    <div class="bg-green-500 h-2 rounded-full transition-all" style="width: {{percentUsed (index .Data "Stats").InputTokensToday (index .Data "Stats").InputTokensLimit}}%"></div>
+                </div>
+                <p class="text-gray-500 text-sm mt-1">{{formatInt (index .Data "Stats").InputTokensLimit}} daily limit</p>
             </div>
-            <div class="bg-gray-800 rounded-lg p-6">
-                <div class="text-gray-400 text-sm">Output Tokens</div>
-                <div class="text-3xl font-bold text-white">{{formatInt (index .Data "Stats").OutputTokensToday}} / {{(index .Data "Stats").OutputTokensLimit}}</div>
+            
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-gray-400 text-sm font-medium">Output Tokens</h3>
+                    <svg class="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                </div>
+                <p class="text-3xl font-bold text-white">{{formatInt (index .Data "Stats").OutputTokensToday}}</p>
+                <div class="mt-2 bg-gray-700 rounded-full h-2">
+                    <div class="bg-purple-500 h-2 rounded-full transition-all" style="width: {{percentUsed (index .Data "Stats").OutputTokensToday (index .Data "Stats").OutputTokensLimit}}%"></div>
+                </div>
+                <p class="text-gray-500 text-sm mt-1">{{formatInt (index .Data "Stats").OutputTokensLimit}} daily limit</p>
             </div>
         </div>
-        
-        <div class="bg-gray-800 rounded-lg p-6 mb-8">
-            <h2 class="text-xl font-bold text-white mb-4">Edit Client</h2>
-            <form method="POST" action="/admin/clients/{{(index .Data "Client").ID}}/update">
-                <div class="grid grid-cols-2 gap-4 mb-4">
-                    <div>
-                        <label class="block text-gray-300 text-sm font-bold mb-2">Rate Limit (min)</label>
-                        <input type="number" name="rate_limit_minute" value="{{(index .Data "Client").RateLimitMinute}}" class="w-full px-3 py-2 bg-gray-700 text-white rounded">
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <!-- Settings Form -->
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <h3 class="text-lg font-semibold text-white mb-6">Client Settings</h3>
+                <form method="POST" action="/admin/clients/{{(index .Data "Client").ID}}/update">
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-gray-400 text-sm font-medium mb-2">Rate (req/min)</label>
+                            <input type="number" name="rate_limit_minute" value="{{(index .Data "Client").RateLimitMinute}}" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 text-sm font-medium mb-2">Rate (req/hour)</label>
+                            <input type="number" name="rate_limit_hour" value="{{(index .Data "Client").RateLimitHour}}" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 text-sm font-medium mb-2">Rate (req/day)</label>
+                            <input type="number" name="rate_limit_day" value="{{(index .Data "Client").RateLimitDay}}" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 text-sm font-medium mb-2">Quota (requests/day)</label>
+                            <input type="number" name="quota_requests" value="{{(index .Data "Client").QuotaRequestsDay}}" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 text-sm font-medium mb-2">Quota (input tokens)</label>
+                            <input type="number" name="quota_input_tokens" value="{{(index .Data "Client").QuotaInputTokensDay}}" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 text-sm font-medium mb-2">Quota (output tokens)</label>
+                            <input type="number" name="quota_output_tokens" value="{{(index .Data "Client").QuotaOutputTokensDay}}" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
                     </div>
-                    <div>
-                        <label class="block text-gray-300 text-sm font-bold mb-2">Rate Limit (hour)</label>
-                        <input type="number" name="rate_limit_hour" value="{{(index .Data "Client").RateLimitHour}}" class="w-full px-3 py-2 bg-gray-700 text-white rounded">
+                    <div class="mb-6">
+                        <label class="block text-gray-400 text-sm font-medium mb-2">Client Name</label>
+                        <input type="text" name="name" value="{{(index .Data "Client").Name}}" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
-                    <div>
-                        <label class="block text-gray-300 text-sm font-bold mb-2">Rate Limit (day)</label>
-                        <input type="number" name="rate_limit_day" value="{{(index .Data "Client").RateLimitDay}}" class="w-full px-3 py-2 bg-gray-700 text-white rounded">
+                    <div class="mb-6">
+                        <label class="block text-gray-400 text-sm font-medium mb-2">Description</label>
+                        <textarea name="description" rows="2" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">{{(index .Data "Client").Description}}</textarea>
                     </div>
-                    <div>
-                        <label class="block text-gray-300 text-sm font-bold mb-2">Quota Requests/Day</label>
-                        <input type="number" name="quota_requests" value="{{(index .Data "Client").QuotaRequestsDay}}" class="w-full px-3 py-2 bg-gray-700 text-white rounded">
+                    <div class="flex items-center justify-between">
+                        <label class="flex items-center text-gray-300">
+                            <input type="checkbox" name="is_active" {{if (index .Data "Client").IsActive}}checked{{end}} class="w-5 h-5 rounded bg-gray-900 border-gray-600 text-blue-600 focus:ring-blue-500">
+                            <span class="ml-2">Active</span>
+                        </label>
+                        <button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors">Save Changes</button>
                     </div>
-                    <div>
-                        <label class="block text-gray-300 text-sm font-bold mb-2">Quota Input Tokens/Day</label>
-                        <input type="number" name="quota_input_tokens" value="{{(index .Data "Client").QuotaInputTokensDay}}" class="w-full px-3 py-2 bg-gray-700 text-white rounded">
+                </form>
+            </div>
+
+            <!-- Danger Zone -->
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <h3 class="text-lg font-semibold text-white mb-6">Danger Zone</h3>
+                
+                <div class="space-y-4">
+                    <div class="p-4 bg-gray-900/50 rounded-xl">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-white font-medium">Regenerate API Key</p>
+                                <p class="text-gray-500 text-sm">Invalidates the current key and generates a new one</p>
+                            </div>
+                            <form method="POST" action="/admin/clients/{{(index .Data "Client").ID}}/regenerate">
+                                <button type="submit" class="px-4 py-2 bg-yellow-600/20 text-yellow-400 border border-yellow-600/50 rounded-lg hover:bg-yellow-600/30 transition-colors">Regenerate</button>
+                            </form>
+                        </div>
                     </div>
-                    <div>
-                        <label class="block text-gray-300 text-sm font-bold mb-2">Quota Output Tokens/Day</label>
-                        <input type="number" name="quota_output_tokens" value="{{(index .Data "Client").QuotaOutputTokensDay}}" class="w-full px-3 py-2 bg-gray-700 text-white rounded">
+                    
+                    <div class="p-4 bg-red-500/10 rounded-xl border border-red-500/30">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-white font-medium">Delete Client</p>
+                                <p class="text-gray-500 text-sm">Permanently delete this client and all associated data</p>
+                            </div>
+                            <form method="POST" action="/admin/clients/{{(index .Data "Client").ID}}/delete" onsubmit="return confirm('Are you sure? This cannot be undone.')">
+                                <button type="submit" class="px-4 py-2 bg-red-600/20 text-red-400 border border-red-600/50 rounded-lg hover:bg-red-600/30 transition-colors">Delete</button>
+                            </form>
+                        </div>
                     </div>
                 </div>
-                <div class="mb-4">
-                    <label class="flex items-center text-gray-300">
-                        <input type="checkbox" name="is_active" {{if (index .Data "Client").IsActive}}checked{{end}} class="mr-2">
-                        Active
-                    </label>
-                </div>
-                <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Update Client</button>
-            </form>
+            </div>
         </div>
-        
-        <div class="bg-gray-800 rounded-lg p-6">
-            <h2 class="text-xl font-bold text-white mb-4">Recent Requests</h2>
+
+        <!-- Request Logs -->
+        <div class="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-700">
+                <h3 class="text-lg font-semibold text-white">Request History</h3>
+            </div>
             <div class="overflow-x-auto">
-                <table class="w-full text-left">
-                    <thead>
-                        <tr class="text-gray-400 border-b border-gray-700">
-                            <th class="py-3">Time</th>
-                            <th class="py-3">Model</th>
-                            <th class="py-3">Status</th>
-                            <th class="py-3">Latency</th>
-                            <th class="py-3">Tokens</th>
+                <table class="w-full">
+                    <thead class="bg-gray-900/50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Time</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Model</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Latency</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Input</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Output</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Error</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody class="divide-y divide-gray-700">
                         {{range (index .Data "RecentLogs")}}
-                        <tr class="border-b border-gray-700 text-gray-300">
-                            <td class="py-3">{{formatDate .CreatedAt}}</td>
-                            <td class="py-3">{{.Model}}</td>
-                            <td class="py-3 {{if ge .StatusCode 400}}text-red-400{{else}}text-green-400{{end}}">{{.StatusCode}}</td>
-                            <td class="py-3">{{.LatencyMs}}ms</td>
-                            <td class="py-3">{{.InputTokens}} / {{.OutputTokens}}</td>
+                        <tr class="hover:bg-gray-700/50">
+                            <td class="px-6 py-4 text-sm text-gray-400">{{formatDate .CreatedAt}}</td>
+                            <td class="px-6 py-4 text-sm text-white">{{.Model}}</td>
+                            <td class="px-6 py-4">
+                                <span class="px-2 py-1 text-xs font-medium rounded-full {{if ge .StatusCode 400}}bg-red-500/20 text-red-400{{else}}bg-green-500/20 text-green-400{{end}}">
+                                    {{.StatusCode}}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 text-sm text-gray-400">{{.LatencyMs}}ms</td>
+                            <td class="px-6 py-4 text-sm text-gray-400">{{.InputTokens}}</td>
+                            <td class="px-6 py-4 text-sm text-gray-400">{{.OutputTokens}}</td>
+                            <td class="px-6 py-4 text-sm text-red-400 max-w-xs truncate">{{.ErrorMessage}}</td>
+                        </tr>
+                        {{else}}
+                        <tr>
+                            <td colspan="7" class="px-6 py-8 text-center text-gray-500">No requests yet</td>
                         </tr>
                         {{end}}
                     </tbody>
@@ -706,26 +1073,165 @@ var adminTemplates = []byte(`
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{.Title}} - Gemini Proxy</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>body { font-family: 'Inter', sans-serif; }</style>
 </head>
-<body class="bg-gray-900 min-h-screen flex items-center justify-center">
-    <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-96">
-        <h1 class="text-2xl font-bold text-white mb-6">{{if (index .Data "Regen")}}API Key Regenerated{{else}}Client Created{{end}}</h1>
-        
-        <div class="mb-4">
-            <p class="text-gray-400 text-sm">Client: {{(index .Data "Client").Name}}</p>
+<body class="bg-gray-900 min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-lg">
+        <div class="bg-gray-800 border border-gray-700 rounded-2xl p-8 text-center">
+            <div class="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                <svg class="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+            </div>
+            
+            <h1 class="text-2xl font-bold text-white mb-2">
+                {{if (index .Data "Regen")}}API Key Regenerated{{else}}Client Created{{end}}
+            </h1>
+            <p class="text-gray-400 mb-6">{{(index .Data "Client").Name}}</p>
+            
+            <div class="bg-amber-500/10 border border-amber-500/50 rounded-xl p-4 mb-6">
+                <div class="flex items-start space-x-3">
+                    <svg class="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                    </svg>
+                    <div class="text-left">
+                        <p class="text-amber-400 font-medium text-sm">Save this API key now!</p>
+                        <p class="text-amber-300/70 text-xs">It will not be shown again</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-gray-900 rounded-xl p-4 mb-6">
+                <code class="text-green-400 break-all text-sm font-mono">{{(index .Data "APIKey")}}</code>
+            </div>
+            
+            <button onclick="navigator.clipboard.writeText('{{(index .Data "APIKey")}}')" class="mb-6 text-blue-400 hover:text-blue-300 text-sm font-medium">
+                Copy to clipboard
+            </button>
+            
+            <div class="flex space-x-3">
+                <a href="/admin/clients/{{(index .Data "Client").ID}}" class="flex-1 px-4 py-3 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition-colors">
+                    View Client
+                </a>
+                <a href="/admin/clients" class="flex-1 px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors">
+                    All Clients
+                </a>
+            </div>
         </div>
-        
-        <div class="mb-4">
-            <p class="text-yellow-400 text-sm font-bold">Save this API key now - it will not be shown again!</p>
+    </div>
+</body>
+</html>
+{{end}}
+
+{{define "settings.html"}}
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Settings - Gemini Proxy</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>body { font-family: 'Inter', sans-serif; }</style>
+</head>
+<body class="bg-gray-900 min-h-screen">
+    <nav class="bg-gray-800/80 backdrop-blur-md border-b border-gray-700 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center space-x-3">
+                    <div class="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center">
+                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                        </svg>
+                    </div>
+                    <span class="text-xl font-bold text-white">Gemini Proxy</span>
+                </div>
+                <div class="flex items-center space-x-1">
+                    <a href="/admin/dashboard" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Dashboard</a>
+                    <a href="/admin/clients" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Clients</a>
+                    <a href="/admin/settings" class="px-3 py-2 rounded-lg text-sm font-medium text-white bg-gray-700">Settings</a>
+                    <form method="POST" action="/admin/logout" class="ml-2">
+                        <button type="submit" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                            </svg>
+                        </button>
+                    </form>
+                </div>
+            </div>
         </div>
-        
-        <div class="bg-gray-700 p-4 rounded mb-6">
-            <code class="text-green-400 break-all">{{(index .Data "APIKey")}}</code>
-        </div>
-        
-        <a href="/admin/clients" class="block text-center bg-blue-600 text-white font-bold py-2 px-4 rounded hover:bg-blue-700">Back to Clients</a>
+    </nav>
+
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {{if .Data.Config}}
+        <form method="POST" action="/admin/settings">
+            <!-- Gemini API Settings -->
+            <div class="bg-gray-800 rounded-2xl border border-gray-700 p-6 mb-6">
+                <h3 class="text-lg font-semibold text-white mb-6 flex items-center">
+                    <svg class="w-5 h-5 text-blue-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
+                    </svg>
+                    Gemini API Configuration
+                </h3>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-gray-300 text-sm font-medium mb-2">API Key</label>
+                        <input type="password" name="gemini_api_key" value="{{(index .Data "Config").Gemini.APIKey}}" placeholder="Enter your Gemini API key"
+                            class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <p class="text-gray-500 text-xs mt-1">Get your API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" class="text-blue-400 hover:text-blue-300">Google AI Studio</a></p>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-gray-300 text-sm font-medium mb-2">Default Model</label>
+                        <select name="default_model" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            {{range (index .Data "Config").Gemini.AllowedModels}}
+                            <option value="{{.}}" {{if eq . (index .Data "Config").Gemini.DefaultModel}}selected{{end}}>{{.}}</option>
+                            {{end}}
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Server Info -->
+            <div class="bg-gray-800 rounded-2xl border border-gray-700 p-6 mb-6">
+                <h3 class="text-lg font-semibold text-white mb-6 flex items-center">
+                    <svg class="w-5 h-5 text-purple-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>
+                    </svg>
+                    Server Information
+                </h3>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-gray-900/50 rounded-xl p-4">
+                        <p class="text-gray-500 text-xs uppercase tracking-wide">Port</p>
+                        <p class="text-white font-medium">{{(index .Data "Config").Server.Port}}</p>
+                    </div>
+                    <div class="bg-gray-900/50 rounded-xl p-4">
+                        <p class="text-gray-500 text-xs uppercase tracking-wide">Host</p>
+                        <p class="text-white font-medium">{{(index .Data "Config").Server.Host}}</p>
+                    </div>
+                    <div class="bg-gray-900/50 rounded-xl p-4">
+                        <p class="text-gray-500 text-xs uppercase tracking-wide">Default Rate (min)</p>
+                        <p class="text-white font-medium">{{(index .Data "Config").Defaults.RateLimit.RequestsPerMinute}}</p>
+                    </div>
+                    <div class="bg-gray-900/50 rounded-xl p-4">
+                        <p class="text-gray-500 text-xs uppercase tracking-wide">Default Daily Quota</p>
+                        <p class="text-white font-medium">{{(index .Data "Config").Defaults.Quota.MaxRequestsPerDay}} requests</p>
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" class="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white font-semibold py-3 px-4 rounded-xl hover:from-blue-700 hover:to-blue-800 transition-all">
+                Save Settings
+            </button>
+        </form>
+        {{end}}
     </div>
 </body>
 </html>
