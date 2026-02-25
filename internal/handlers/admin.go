@@ -434,18 +434,50 @@ func formatDuration(ms int) string {
 	return fmt.Sprintf("%.1fs", float64(ms)/1000)
 }
 
-func formatInt(n int) string {
-	if n == 0 {
+func formatInt(n interface{}) string {
+	switch v := n.(type) {
+	case int:
+		if v == 0 {
+			return "0"
+		}
+		return fmt.Sprintf("%d", v)
+	case int64:
+		if v == 0 {
+			return "0"
+		}
+		return fmt.Sprintf("%d", v)
+	case float64:
+		if v == 0 {
+			return "0"
+		}
+		return fmt.Sprintf("%.0f", v)
+	default:
 		return "0"
 	}
-	return fmt.Sprintf("%d", n)
 }
 
-func percentUsed(used, limit int) int {
-	if limit == 0 {
+func percentUsed(used, limit interface{}) int {
+	var usedVal, limitVal int64
+	switch v := used.(type) {
+	case int:
+		usedVal = int64(v)
+	case int64:
+		usedVal = v
+	default:
+		usedVal = 0
+	}
+	switch v := limit.(type) {
+	case int:
+		limitVal = int64(v)
+	case int64:
+		limitVal = v
+	default:
+		limitVal = 0
+	}
+	if limitVal == 0 {
 		return 0
 	}
-	return (used * 100) / limit
+	return int((usedVal * 100) / limitVal)
 }
 
 func parseInt(s string, def int) int {

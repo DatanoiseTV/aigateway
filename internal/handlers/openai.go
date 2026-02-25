@@ -91,7 +91,7 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	log.Printf("[CHAT] Model: %s, Messages: %d", req.Model, len(req.Messages))
+	log.Printf("[CHAT] Model: %s, Messages: %d, Stream: %v", req.Model, len(req.Messages), req.Stream)
 
 	model := h.mapModel(req.Model)
 	if model == "" {
@@ -240,6 +240,56 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 		Model:   req.Model,
 		Choices: choices,
 		Usage:   usage,
+	}
+
+	log.Printf("[CHAT] Sending response: choices=%d, content=%s", len(choices), choices)
+
+	if req.Stream {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		for i, choice := range choices {
+			if msg, ok := choice["message"].(map[string]string); ok {
+				chunk := map[string]interface{}{
+					"id":      response.ID,
+					"object":  "chat.completion.chunk",
+					"created": response.Created,
+					"model":   response.Model,
+					"choices": []map[string]interface{}{
+						{
+							"index":         i,
+							"delta":         msg,
+							"finish_reason": choice["finish_reason"],
+						},
+					},
+				}
+				data, _ := json.Marshal(chunk)
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				flusher.Flush()
+			}
+		}
+
+		done := map[string]interface{}{
+			"id":      response.ID,
+			"object":  "chat.completion.chunk",
+			"created": response.Created,
+			"model":   response.Model,
+			"choices": []map[string]interface{}{
+				{"index": 0, "delta": map[string]string{}, "finish_reason": "stop"},
+			},
+		}
+		data, _ := json.Marshal(done)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
