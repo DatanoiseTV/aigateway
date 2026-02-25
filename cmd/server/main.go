@@ -62,6 +62,10 @@ func main() {
 	geminiService := services.NewGeminiService(db, cfg)
 	statsService := services.NewStatsService(db)
 
+	// Set up the real-time dashboard WebSocket hub
+	dashboardHub := services.NewDashboardHub(statsService)
+	geminiService.SetOnRequestLogged(dashboardHub.NotifyUpdate)
+
 	router := chi.NewRouter()
 
 	router.Use(middleware.RequestLogger)
@@ -82,7 +86,7 @@ func main() {
 		openaiHandler.RegisterRoutes(r)
 	})
 
-	adminHandler, err := handlers.NewAdminHandler(cfg, clientService, statsService, geminiService)
+	adminHandler, err := handlers.NewAdminHandler(cfg, clientService, statsService, geminiService, dashboardHub)
 	if err != nil {
 		log.Fatalf("Failed to initialize admin handler: %v", err)
 	}

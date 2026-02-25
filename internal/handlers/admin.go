@@ -4,6 +4,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"time"
 
@@ -13,14 +14,22 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/bcrypt"
 )
+
+var wsUpgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin:     func(r *http.Request) bool { return true },
+}
 
 type AdminHandler struct {
 	cfg           *config.Config
 	clientService *services.ClientService
 	statsService  *services.StatsService
 	geminiService *services.GeminiService
+	dashboardHub  *services.DashboardHub
 	templates     *template.Template
 }
 
@@ -31,7 +40,7 @@ type PageData struct {
 	CSRFToken string
 }
 
-func NewAdminHandler(cfg *config.Config, clientService *services.ClientService, statsService *services.StatsService, geminiService *services.GeminiService) (*AdminHandler, error) {
+func NewAdminHandler(cfg *config.Config, clientService *services.ClientService, statsService *services.StatsService, geminiService *services.GeminiService, dashboardHub *services.DashboardHub) (*AdminHandler, error) {
 	tmpl := template.New("admin").Funcs(template.FuncMap{
 		"formatDate":     formatDate,
 		"formatInt":      formatInt,
@@ -51,6 +60,7 @@ func NewAdminHandler(cfg *config.Config, clientService *services.ClientService, 
 		clientService: clientService,
 		statsService:  statsService,
 		geminiService: geminiService,
+		dashboardHub:  dashboardHub,
 		templates:     tmpl,
 	}, nil
 }
@@ -78,6 +88,7 @@ func (h *AdminHandler) RegisterRoutes(r *chi.Mux) {
 		r.Get("/admin/settings", h.ShowSettings)
 		r.Post("/admin/settings", h.UpdateSettings)
 		r.Get("/admin/stats/api", h.GetAPISTats)
+		r.Get("/admin/ws", h.HandleDashboardWS)
 		r.Get("/admin/api/test-connection", h.TestConnection)
 		r.Get("/admin/api/models", h.GetModels)
 		r.Get("/admin/api/fetch-models", h.FetchModels)
@@ -405,6 +416,16 @@ func (h *AdminHandler) FetchModels(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `{"success":true,"models":[%s]}`, formatStringArray(models))
 }
 
+// HandleDashboardWS upgrades an HTTP connection to WebSocket for real-time dashboard updates.
+func (h *AdminHandler) HandleDashboardWS(w http.ResponseWriter, r *http.Request) {
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("[WS] Upgrade failed: %v", err)
+		return
+	}
+	h.dashboardHub.Register(conn)
+}
+
 func formatStringArray(arr []string) string {
 	result := ""
 	for i, s := range arr {
@@ -620,7 +641,7 @@ var adminTemplates = []byte(`
                 <div class="flex items-center justify-between">
                     <div>
                         <p class="text-gray-400 text-sm font-medium">Total Requests</p>
-                        <p class="text-3xl font-bold text-white mt-1">{{(index .Data "Stats").TotalRequestsToday}}</p>
+                        <p id="stat-requests" class="text-3xl font-bold text-white mt-1">{{(index .Data "Stats").TotalRequestsToday}}</p>
                     </div>
                     <div class="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center">
                         <svg class="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -634,7 +655,7 @@ var adminTemplates = []byte(`
                 <div class="flex items-center justify-between">
                     <div>
                         <p class="text-gray-400 text-sm font-medium">Input Tokens</p>
-                        <p class="text-3xl font-bold text-white mt-1">{{formatInt (index .Data "Stats").TotalInputTokensToday}}</p>
+                        <p id="stat-input-tokens" class="text-3xl font-bold text-white mt-1">{{formatInt (index .Data "Stats").TotalInputTokensToday}}</p>
                     </div>
                     <div class="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center">
                         <svg class="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -648,7 +669,7 @@ var adminTemplates = []byte(`
                 <div class="flex items-center justify-between">
                     <div>
                         <p class="text-gray-400 text-sm font-medium">Output Tokens</p>
-                        <p class="text-3xl font-bold text-white mt-1">{{formatInt (index .Data "Stats").TotalOutputTokensToday}}</p>
+                        <p id="stat-output-tokens" class="text-3xl font-bold text-white mt-1">{{formatInt (index .Data "Stats").TotalOutputTokensToday}}</p>
                     </div>
                     <div class="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center">
                         <svg class="w-6 h-6 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -662,7 +683,7 @@ var adminTemplates = []byte(`
                 <div class="flex items-center justify-between">
                     <div>
                         <p class="text-gray-400 text-sm font-medium">Active Clients</p>
-                        <p class="text-3xl font-bold text-white mt-1">{{(index .Data "Stats").ActiveClients}} <span class="text-lg text-gray-500">/ {{(index .Data "Stats").TotalClients}}</span></p>
+                        <p class="text-3xl font-bold text-white mt-1"><span id="stat-active-clients">{{(index .Data "Stats").ActiveClients}}</span> <span class="text-lg text-gray-500">/ <span id="stat-total-clients">{{(index .Data "Stats").TotalClients}}</span></span></p>
                     </div>
                     <div class="w-12 h-12 bg-emerald-500/20 rounded-xl flex items-center justify-center">
                         <svg class="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -725,7 +746,7 @@ var adminTemplates = []byte(`
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Latency</th>
                         </tr>
                     </thead>
-                    <tbody class="divide-y divide-gray-700">
+                    <tbody id="recent-logs" class="divide-y divide-gray-700">
                         {{range (index .Data "RecentLogs")}}
                         <tr class="hover:bg-gray-700/50 transition-colors">
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">{{formatDate .CreatedAt}}</td>
@@ -751,31 +772,107 @@ var adminTemplates = []byte(`
     </div>
     
     <script>
-        const modelUsage = {{(index .Data "ModelUsage")}};
-        const labels = Object.keys(modelUsage);
-        const data = Object.values(modelUsage);
-        
-        if (labels.length > 0) {
-            new Chart(document.getElementById('modelChart'), {
+        var chartColors = ['#3B82F6','#10B981','#8B5CF6','#F59E0B','#EF4444','#EC4899','#06B6D4','#F97316','#84CC16','#E879F9'];
+        var modelChart = null;
+
+        function initChart(usage) {
+            var el = document.getElementById('modelChart');
+            var labels = Object.keys(usage);
+            var data = Object.values(usage);
+            if (labels.length === 0) {
+                el.parentElement.innerHTML = '<h3 class="text-lg font-semibold text-white mb-4">Model Usage</h3><canvas id="modelChart" height="200"></canvas><div id="chartEmpty" class="text-gray-500 text-center py-8">No usage data yet</div>';
+                return;
+            }
+            modelChart = new Chart(el, {
                 type: 'doughnut',
                 data: {
                     labels: labels,
-                    datasets: [{
-                        data: data,
-                        backgroundColor: ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#EC4899'],
-                        borderWidth: 0
-                    }]
+                    datasets: [{ data: data, backgroundColor: chartColors.slice(0, labels.length), borderWidth: 0 }]
                 },
                 options: {
                     responsive: true,
-                    plugins: {
-                        legend: { position: 'right', labels: { color: '#9CA3AF' } }
-                    }
+                    animation: { duration: 300 },
+                    plugins: { legend: { position: 'right', labels: { color: '#9CA3AF' } } }
                 }
             });
-        } else {
-            document.getElementById('modelChart').parentElement.innerHTML = '<div class="text-gray-500 text-center py-8">No usage data yet</div>';
         }
+
+        function updateChart(usage) {
+            var labels = Object.keys(usage);
+            var data = Object.values(usage);
+            if (labels.length === 0) return;
+            var empty = document.getElementById('chartEmpty');
+            if (empty) empty.remove();
+            if (!modelChart) {
+                initChart(usage);
+                return;
+            }
+            modelChart.data.labels = labels;
+            modelChart.data.datasets[0].data = data;
+            modelChart.data.datasets[0].backgroundColor = chartColors.slice(0, labels.length);
+            modelChart.update();
+        }
+
+        function updateStats(stats) {
+            document.getElementById('stat-requests').textContent = stats.total_requests_today;
+            document.getElementById('stat-input-tokens').textContent = stats.total_input_tokens_today;
+            document.getElementById('stat-output-tokens').textContent = stats.total_output_tokens_today;
+            document.getElementById('stat-active-clients').textContent = stats.active_clients;
+            document.getElementById('stat-total-clients').textContent = stats.total_clients;
+        }
+
+        function updateRecentLogs(logs) {
+            var tbody = document.getElementById('recent-logs');
+            if (!logs || logs.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-8 text-center text-gray-500">No requests yet</td></tr>';
+                return;
+            }
+            var html = '';
+            logs.forEach(function(l) {
+                var statusClass = l.status_code >= 400 ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400';
+                html += '<tr class="hover:bg-gray-700/50 transition-colors">';
+                html += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">' + l.created_at + '</td>';
+                html += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300 font-mono">' + l.client_id + '</td>';
+                html += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">' + l.model + '</td>';
+                html += '<td class="px-6 py-4 whitespace-nowrap"><span class="px-2 py-1 text-xs font-medium rounded-full ' + statusClass + '">' + l.status_code + '</span></td>';
+                html += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">' + l.input_tokens + ' / ' + l.output_tokens + '</td>';
+                html += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">' + l.latency_ms + 'ms</td>';
+                html += '</tr>';
+            });
+            tbody.innerHTML = html;
+        }
+
+        // WebSocket connection for real-time updates
+        function connectWS() {
+            var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            var ws = new WebSocket(proto + '//' + location.host + '/admin/ws');
+
+            ws.onmessage = function(event) {
+                try {
+                    var msg = JSON.parse(event.data);
+                    if (msg.type === 'stats_update') {
+                        updateStats(msg.stats);
+                        updateRecentLogs(msg.recent_logs);
+                        updateChart(msg.model_usage);
+                    }
+                } catch (e) {
+                    console.error('WS parse error:', e);
+                }
+            };
+
+            ws.onclose = function() {
+                // Reconnect after 3 seconds
+                setTimeout(connectWS, 3000);
+            };
+
+            ws.onerror = function() {
+                ws.close();
+            };
+        }
+
+        // Initialize chart with server-rendered data, then connect WS
+        initChart({{(index .Data "ModelUsage")}});
+        connectWS();
     </script>
 </body>
 </html>
@@ -1329,6 +1426,14 @@ var adminTemplates = []byte(`
             btn.disabled = false;
             btn.textContent = 'Fetch Available Models';
         }
+
+        function selectAllModels() {
+            document.querySelectorAll('#modelList input[type="checkbox"]').forEach(cb => { cb.checked = true; });
+        }
+
+        function deselectAllModels() {
+            document.querySelectorAll('#modelList input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+        }
     </script>
 </head>
 <body class="bg-gray-900 min-h-screen">
@@ -1399,12 +1504,22 @@ var adminTemplates = []byte(`
 
             <!-- Allowed Models -->
             <div class="bg-gray-800 rounded-2xl border border-gray-700 p-6 mb-6">
-                <h3 class="text-lg font-semibold text-white mb-4 flex items-center">
-                    <svg class="w-5 h-5 text-blue-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                    </svg>
-                    Allowed Models
-                </h3>
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-white flex items-center">
+                        <svg class="w-5 h-5 text-blue-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        Allowed Models
+                    </h3>
+                    <div class="flex items-center space-x-2">
+                        <button type="button" onclick="selectAllModels()" class="px-3 py-1.5 text-xs font-medium bg-blue-600/20 text-blue-400 border border-blue-600/50 rounded-lg hover:bg-blue-600/30 transition-colors">
+                            Allow All
+                        </button>
+                        <button type="button" onclick="deselectAllModels()" class="px-3 py-1.5 text-xs font-medium bg-gray-600/20 text-gray-400 border border-gray-600/50 rounded-lg hover:bg-gray-600/30 transition-colors">
+                            Clear All
+                        </button>
+                    </div>
+                </div>
                 <div id="modelSection" class="{{if (index .Data "Config").Gemini.AllowedModels}}{{else}}hidden{{end}} mb-4">
                     <div id="modelList" class="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
                         {{range (index .Data "Config").Gemini.AllowedModels}}

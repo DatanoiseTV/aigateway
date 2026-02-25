@@ -17,12 +17,19 @@ import (
 )
 
 type GeminiService struct {
-	db  *gorm.DB
-	cfg *config.Config
+	db              *gorm.DB
+	cfg             *config.Config
+	onRequestLogged func() // called after each request is logged, used for live dashboard updates
 }
 
 func NewGeminiService(db *gorm.DB, cfg *config.Config) *GeminiService {
 	return &GeminiService{db: db, cfg: cfg}
+}
+
+// SetOnRequestLogged registers a callback that fires after each request is logged.
+// Used by the dashboard WebSocket hub to push live updates.
+func (s *GeminiService) SetOnRequestLogged(fn func()) {
+	s.onRequestLogged = fn
 }
 
 type GeminiRequest struct {
@@ -167,7 +174,14 @@ func (s *GeminiService) LogRequest(clientID, model string, statusCode int, input
 		return fmt.Errorf("failed to log request: %w", err)
 	}
 
-	return s.updateDailyUsage(clientID, inputTokens, outputTokens, statusCode)
+	err := s.updateDailyUsage(clientID, inputTokens, outputTokens, statusCode)
+
+	// Notify dashboard hub about the new request
+	if s.onRequestLogged != nil {
+		s.onRequestLogged()
+	}
+
+	return err
 }
 
 func (s *GeminiService) updateDailyUsage(clientID string, inputTokens, outputTokens, statusCode int) error {
