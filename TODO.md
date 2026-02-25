@@ -1,4 +1,4 @@
-# TODO - Gemini Proxy Gateway
+# TODO - AI Gateway
 
 ## 2026-02-25
 
@@ -7,7 +7,6 @@
 - [x] Add key type dropdown to create client modal
 - [x] Add key type selection to regenerate key function
 - [x] Update regenerate key form to include key type selector
-
 - [x] Fix OpenAI streaming 500 error - statusResponseWriter missing http.Flusher interface (72f001b)
 - [x] Fix SSE streaming format to follow OpenAI spec (role chunk -> content chunk -> done chunk)
 - [x] Fix model mapping - gemini-2.0-flash-lite-001 was incorrectly mapped to gemini-2.0-flash
@@ -22,8 +21,21 @@
 - [x] WebSocket hub with debounced broadcasting on every logged request
 - [x] Auto-reconnect on disconnect (3s backoff)
 - [x] Allow All / Clear All buttons for model selection in settings page
+- [x] Fix WebSocket upgrade - add http.Hijacker to statusResponseWriter (1a5ae20)
+- [x] Rename project from gemini-proxy to ai-gateway (8e3195e)
+- [x] Multi-backend provider architecture (3688530)
+  - Provider interface with implementations for Gemini, OpenAI, Anthropic, Mistral, Ollama, LM Studio
+  - Config redesigned: providers map replaces single gemini section
+  - Old config format auto-migrated on load
+- [x] Per-client backend routing via provider registry (cfcae4e)
+- [x] Per-client system prompt injection (cfcae4e)
+- [x] Per-client base URL override for local backends (cfcae4e)
+- [x] Admin UI for backend selection, system prompt, and multi-provider settings (4201da0)
+- [x] Revamp README with full feature documentation
 
 ### Next Steps
-- Test the application to verify key type selection works
-- Add client-side showing the key type in the clients list
-- Test streaming with various OpenAI-compatible clients
+- Test streaming with all provider backends
+- Add provider health check to dashboard
+- Add ability to remove providers from settings UI
+- Add model list fetching for non-Gemini providers
+- Add request log filtering by backend provider
