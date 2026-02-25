@@ -100,10 +100,21 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 	log.Printf("[CHAT] Mapped to Gemini model: %s", model)
 
 	var prompt string
-	for _, msg := range req.Messages {
+	for i, msg := range req.Messages {
 		role, _ := msg["role"].(string)
 		content, _ := msg["content"].(string)
+		if content == "" {
+			continue
+		}
+		log.Printf("[CHAT] Message %d: role=%s, content=%s", i, role, content[:min(50, len(content))])
 		prompt += role + ": " + content + "\n"
+	}
+
+	if prompt == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "No content in messages"})
+		return
 	}
 
 	log.Printf("[CHAT] Prompt: %s...", prompt[:min(100, len(prompt))])
