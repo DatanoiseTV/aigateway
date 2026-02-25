@@ -26,6 +26,8 @@ func (h *OpenAIHandler) RegisterRoutes(r chi.Router) {
 		r.Use(middleware.Recovery)
 
 		r.Post("/v1/chat/completions", h.ChatCompletions)
+		r.Post("/v1/messages", h.ChatCompletions)
+		r.Post("/v1/messages/count_tokens", h.CountTokens)
 		r.Get("/v1/models", h.ListModels)
 		r.Get("/v1/models/{model}", h.GetModel)
 	})
@@ -199,6 +201,46 @@ func (h *OpenAIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(result)
+}
+
+func (h *OpenAIHandler) CountTokens(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to read request body"})
+		return
+	}
+
+	var req struct {
+		Model    string                   `json:"model"`
+		Messages []map[string]interface{} `json:"messages"`
+		Prompt   string                   `json:"prompt,omitempty"`
+	}
+
+	if err := json.Unmarshal(body, &req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	text := req.Prompt
+	if text == "" {
+		for _, msg := range req.Messages {
+			if content, ok := msg["content"].(string); ok {
+				text += content + "\n"
+			}
+		}
+	}
+
+	estimatedTokens := len(text) / 4
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"tokens": estimatedTokens,
+	})
 }
 
 func (h *OpenAIHandler) GetModel(w http.ResponseWriter, r *http.Request) {
