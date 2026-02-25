@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"gemini-proxy/internal/config"
@@ -82,7 +84,10 @@ func (s *GeminiService) ForwardRequest(model string, body []byte) ([]byte, int, 
 		}
 	}
 
+	log.Printf("[GEMINI] ForwardRequest model=%s, default=%s, allowed=%v", model, s.cfg.Gemini.DefaultModel, s.cfg.Gemini.AllowedModels)
+
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, s.cfg.Gemini.APIKey)
+	log.Printf("[GEMINI] URL: %s", url)
 
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
@@ -246,15 +251,19 @@ func (s *GeminiService) FetchAvailableModels() ([]string, error) {
 		}
 
 		for _, m := range result.Models {
+			modelName := m.Name
+			if strings.HasPrefix(modelName, "models/") {
+				modelName = strings.TrimPrefix(modelName, "models/")
+			}
 			found := false
 			for _, existing := range models {
-				if existing == m.Name {
+				if existing == modelName {
 					found = true
 					break
 				}
 			}
 			if !found {
-				models = append(models, m.Name)
+				models = append(models, modelName)
 			}
 		}
 	}

@@ -10,14 +10,22 @@ admin:
     password_hash: $2a$10$4XSqLvs1o0Oi8jVyhDQIYOG5a5/5/EAubMVNWZLGu0VF9t2b0vd6K
     session_secret: e29ad02fae8192569b578627528aead9
 gemini:
-    api_key: ""
+    api_key: AIzaSyAdd-ThOqp9U4ky_3sGR4jJh220ydXwm1Q
     default_model: gemini-flash-lite-latest
     allowed_models:
-        - gemini-2.0-flash
-        - gemini-2.0-flash-lite
-        - gemini-2.0-pro
-        - gemini-pro
-        - gemini-pro-vision
+        - models/gemini-2.5-flash
+        - models/gemini-2.5-pro
+        - models/gemini-2.0-flash
+        - models/gemini-2.0-flash-001
+        - models/gemini-2.0-flash-lite-001
+        - models/gemini-2.0-flash-lite
+        - models/gemini-2.5-flash-lite
+        - models/gemini-2.5-flash-preview-tts
+        - models/gemini-2.5-pro-preview-tts
+        - models/gemini-flash-latest
+        - models/gemini-pro-latest
+        - models/gemini-3-pro-preview
+        - models/gemini-3.1-pro-preview
     timeout_seconds: 120
 defaults:
     rate_limit:
