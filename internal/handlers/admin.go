@@ -1189,11 +1189,9 @@ var adminTemplates = []byte(`
                     
                     <div>
                         <label class="block text-gray-300 text-sm font-medium mb-2">Default Model</label>
-                        <select name="default_model" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            {{range (index .Data "Config").Gemini.AllowedModels}}
-                            <option value="{{.}}" {{if eq . (index .Data "Config").Gemini.DefaultModel}}selected{{end}}>{{.}}</option>
-                            {{end}}
-                        </select>
+                        <input type="text" name="default_model" value="{{(index .Data "Config").Gemini.DefaultModel}}" placeholder="gemini-flash-lite-latest"
+                            class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <p class="text-gray-500 text-xs mt-1">Available: gemini-2.0-flash, gemini-2.0-flash-lite, gemini-2.0-pro, gemini-flash-lite-latest</p>
                     </div>
                 </div>
             </div>

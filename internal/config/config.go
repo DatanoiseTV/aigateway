@@ -126,7 +126,7 @@ func createDefaultConfig(path string) (*Config, error) {
 			SessionSecret: secret,
 		},
 		Gemini: GeminiConfig{
-			DefaultModel:   "gemini-2.0-flash",
+			DefaultModel:   "gemini-flash-lite-latest",
 			AllowedModels:  []string{"gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.0-pro", "gemini-pro", "gemini-pro-vision"},
 			TimeoutSeconds: 120,
 		},
@@ -190,7 +190,7 @@ func ensureDefaults(cfg Config, path string) (Config, error) {
 	}
 
 	if cfg.Gemini.AllowedModels == nil || len(cfg.Gemini.AllowedModels) == 0 {
-		cfg.Gemini.AllowedModels = []string{"gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.0-pro", "gemini-pro", "gemini-pro-vision"}
+		cfg.Gemini.AllowedModels = []string{"gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.0-pro", "gemini-flash-lite-latest", "gemini-pro", "gemini-pro-vision"}
 		changed = true
 	}
 
