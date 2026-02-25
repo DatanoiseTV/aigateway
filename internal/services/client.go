@@ -38,6 +38,8 @@ func (s *ClientService) CreateClient(name, description string, cfg *config.Confi
 		QuotaInputTokensDay:  cfg.Defaults.Quota.MaxInputTokensPerDay,
 		QuotaOutputTokensDay: cfg.Defaults.Quota.MaxOutputTokensPerDay,
 		QuotaRequestsDay:     cfg.Defaults.Quota.MaxRequestsPerDay,
+		MaxInputTokens:       cfg.Defaults.Quota.MaxInputTokens,
+		MaxOutputTokens:      cfg.Defaults.Quota.MaxOutputTokens,
 		CreatedAt:            time.Now(),
 		UpdatedAt:            time.Now(),
 	}

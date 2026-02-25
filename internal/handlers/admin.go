@@ -243,6 +243,8 @@ func (h *AdminHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	quotaInputTokens := parseInt(r.Form.Get("quota_input_tokens"), 1000000)
 	quotaOutputTokens := parseInt(r.Form.Get("quota_output_tokens"), 500000)
 	quotaRequests := parseInt(r.Form.Get("quota_requests"), 1000)
+	maxInputTokens := parseInt(r.Form.Get("max_input_tokens"), 1000000)
+	maxOutputTokens := parseInt(r.Form.Get("max_output_tokens"), 8192)
 
 	client, err := h.clientService.GetClientByID(id)
 	if err != nil || client == nil {
@@ -259,6 +261,8 @@ func (h *AdminHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	client.QuotaInputTokensDay = quotaInputTokens
 	client.QuotaOutputTokensDay = quotaOutputTokens
 	client.QuotaRequestsDay = quotaRequests
+	client.MaxInputTokens = maxInputTokens
+	client.MaxOutputTokens = maxOutputTokens
 
 	err = h.clientService.UpdateClient(client)
 	if err != nil {
@@ -968,8 +972,18 @@ var adminTemplates = []byte(`
                             <input type="number" name="quota_input_tokens" value="{{(index .Data "Client").QuotaInputTokensDay}}" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                         </div>
                         <div>
-                            <label class="block text-gray-400 text-sm font-medium mb-2">Quota (output tokens)</label>
+                            <label class="block text-gray-400 text-sm font-medium mb-2">Quota (output tokens/day)</label>
                             <input type="number" name="quota_output_tokens" value="{{(index .Data "Client").QuotaOutputTokensDay}}" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 text-sm font-medium mb-2">Max input tokens/request</label>
+                            <input type="number" name="max_input_tokens" value="{{(index .Data "Client").MaxInputTokens}}" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <p class="text-gray-500 text-xs mt-1">0 = unlimited</p>
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 text-sm font-medium mb-2">Max output tokens/request</label>
+                            <input type="number" name="max_output_tokens" value="{{(index .Data "Client").MaxOutputTokens}}" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <p class="text-gray-500 text-xs mt-1">0 = unlimited</p>
                         </div>
                     </div>
                     <div class="mb-6">

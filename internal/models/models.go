@@ -16,6 +16,8 @@ type Client struct {
 	QuotaInputTokensDay  int       `gorm:"default:1000000" json:"quota_input_tokens_day"`
 	QuotaOutputTokensDay int       `gorm:"default:500000" json:"quota_output_tokens_day"`
 	QuotaRequestsDay     int       `gorm:"default:1000" json:"quota_requests_day"`
+	MaxInputTokens       int       `gorm:"default:1000000" json:"max_input_tokens"`
+	MaxOutputTokens      int       `gorm:"default:8192" json:"max_output_tokens"`
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
 }
@@ -66,6 +68,8 @@ type ClientStats struct {
 	RequestsLimit     int    `json:"requests_limit"`
 	InputTokensLimit  int    `json:"input_tokens_limit"`
 	OutputTokensLimit int    `json:"output_tokens_limit"`
+	MaxInputTokens    int    `json:"max_input_tokens"`
+	MaxOutputTokens   int    `json:"max_output_tokens"`
 }
 
 type RateLimitInfo struct {

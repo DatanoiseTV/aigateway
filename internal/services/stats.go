@@ -77,6 +77,8 @@ func (s *StatsService) GetClientStats(clientID string) (*models.ClientStats, err
 		RequestsLimit:     client.QuotaRequestsDay,
 		InputTokensLimit:  client.QuotaInputTokensDay,
 		OutputTokensLimit: client.QuotaOutputTokensDay,
+		MaxInputTokens:    client.MaxInputTokens,
+		MaxOutputTokens:   client.MaxOutputTokens,
 	}
 
 	if err == nil {

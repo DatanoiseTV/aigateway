@@ -59,6 +59,8 @@ type QuotaDefaults struct {
 	MaxInputTokensPerDay  int `yaml:"max_input_tokens_per_day"`
 	MaxOutputTokensPerDay int `yaml:"max_output_tokens_per_day"`
 	MaxRequestsPerDay     int `yaml:"max_requests_per_day"`
+	MaxInputTokens        int `yaml:"max_input_tokens"`
+	MaxOutputTokens       int `yaml:"max_output_tokens"`
 }
 
 type DatabaseConfig struct {
@@ -140,6 +142,8 @@ func createDefaultConfig(path string) (*Config, error) {
 				MaxInputTokensPerDay:  1000000,
 				MaxOutputTokensPerDay: 500000,
 				MaxRequestsPerDay:     1000,
+				MaxInputTokens:        1000000,
+				MaxOutputTokens:       8192,
 			},
 		},
 		Database: DatabaseConfig{
