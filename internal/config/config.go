@@ -1,9 +1,12 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 
+	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
 )
 
@@ -70,6 +73,9 @@ type LoggingConfig struct {
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return createDefaultConfig(path)
+		}
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
@@ -90,5 +96,140 @@ func Load(path string) (*Config, error) {
 		cfg.Defaults.RateLimit.RequestsPerMinute = 60
 	}
 
+	cfg, err = ensureDefaults(cfg, path)
+	if err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
+}
+
+func createDefaultConfig(path string) (*Config, error) {
+	secret := generateRandomString(32)
+	defaultPassword := generateRandomString(16)
+	hash, err := bcrypt.GenerateFromPassword([]byte(defaultPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	cfg := &Config{
+		Server: ServerConfig{
+			Host: "0.0.0.0",
+			Port: 8080,
+			HTTPS: HTTPSConfig{
+				Enabled: false,
+			},
+		},
+		Admin: AdminConfig{
+			Username:      "admin",
+			PasswordHash:  string(hash),
+			SessionSecret: secret,
+		},
+		Gemini: GeminiConfig{
+			DefaultModel:   "gemini-2.0-flash",
+			AllowedModels:  []string{"gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.0-pro", "gemini-pro", "gemini-pro-vision"},
+			TimeoutSeconds: 120,
+		},
+		Defaults: DefaultsConfig{
+			RateLimit: RateLimitDefaults{
+				RequestsPerMinute: 60,
+				RequestsPerHour:   1000,
+				RequestsPerDay:    10000,
+			},
+			Quota: QuotaDefaults{
+				MaxInputTokensPerDay:  1000000,
+				MaxOutputTokensPerDay: 500000,
+				MaxRequestsPerDay:     1000,
+			},
+		},
+		Database: DatabaseConfig{
+			Path: "./data/gateway.db",
+		},
+		Logging: LoggingConfig{
+			Level: "info",
+			File:  "./logs/gateway.log",
+		},
+	}
+
+	if err := saveConfig(cfg, path); err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("\n===========================================\n")
+	fmt.Printf("  Default credentials generated!\n")
+	fmt.Printf("===========================================\n")
+	fmt.Printf("  Username: admin\n")
+	fmt.Printf("  Password: %s\n", defaultPassword)
+	fmt.Printf("  (Save this - it will not be shown again)\n")
+	fmt.Printf("===========================================\n\n")
+
+	return cfg, nil
+}
+
+func ensureDefaults(cfg Config, path string) (Config, error) {
+	changed := false
+
+	if cfg.Admin.PasswordHash == "" {
+		defaultPassword := generateRandomString(16)
+		hash, err := bcrypt.GenerateFromPassword([]byte(defaultPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return cfg, fmt.Errorf("failed to hash password: %w", err)
+		}
+		cfg.Admin.PasswordHash = string(hash)
+		changed = true
+		fmt.Printf("\n===========================================\n")
+		fmt.Printf("  Default password generated!\n")
+		fmt.Printf("  Username: admin\n")
+		fmt.Printf("  Password: %s\n", defaultPassword)
+		fmt.Printf("===========================================\n\n")
+	}
+
+	if cfg.Admin.SessionSecret == "" {
+		cfg.Admin.SessionSecret = generateRandomString(32)
+		changed = true
+	}
+
+	if cfg.Gemini.AllowedModels == nil || len(cfg.Gemini.AllowedModels) == 0 {
+		cfg.Gemini.AllowedModels = []string{"gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.0-pro", "gemini-pro", "gemini-pro-vision"}
+		changed = true
+	}
+
+	if changed {
+		if err := saveConfig(&cfg, path); err != nil {
+			return cfg, err
+		}
+	}
+
+	return cfg, nil
+}
+
+func saveConfig(cfg *Config, path string) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	dir := path
+	for i := len(dir) - 1; i >= 0; i-- {
+		if dir[i] == '/' {
+			dir = dir[:i]
+			break
+		}
+	}
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("failed to write config: %w", err)
+	}
+
+	return nil
+}
+
+func generateRandomString(length int) string {
+	b := make([]byte, length)
+	rand.Read(b)
+	return hex.EncodeToString(b)[:length]
 }

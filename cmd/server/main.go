@@ -40,6 +40,13 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	if err := os.MkdirAll("./data", 0755); err != nil {
+		log.Fatalf("Failed to create data directory: %v", err)
+	}
+	if err := os.MkdirAll("./logs", 0755); err != nil {
+		log.Fatalf("Failed to create logs directory: %v", err)
+	}
+
 	db, err := initDatabase(cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
@@ -61,11 +68,12 @@ func main() {
 	router.Use(middleware.MaxRequestSize(10 << 20))
 
 	proxyHandler := handlers.NewProxyHandler(geminiService)
-	proxyHandler.RegisterRoutes(router)
 
 	rateLimiter := middleware.NewRateLimiter()
+	authMiddleware := middleware.NewAuthMiddleware(clientService)
+
 	router.Group(func(r chi.Router) {
-		r.Use(middleware.NewAuthMiddleware(clientService).Handler)
+		r.Use(authMiddleware.Handler)
 		r.Use(rateLimiter.Middleware)
 		proxyHandler.RegisterRoutes(r)
 	})
