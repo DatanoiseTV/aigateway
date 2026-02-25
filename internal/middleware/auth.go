@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"gemini-proxy/internal/models"
-	"gemini-proxy/internal/services"
+	"ai-gateway/internal/models"
+	"ai-gateway/internal/services"
 
 	"github.com/patrickmn/go-cache"
 )

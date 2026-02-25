@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"gemini-proxy/internal/middleware"
-	"gemini-proxy/internal/models"
-	"gemini-proxy/internal/services"
+	"ai-gateway/internal/middleware"
+	"ai-gateway/internal/models"
+	"ai-gateway/internal/services"
 
 	"github.com/go-chi/chi/v5"
 )

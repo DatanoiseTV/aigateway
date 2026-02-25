@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"gemini-proxy/internal/models"
+	"ai-gateway/internal/models"
 
 	"github.com/patrickmn/go-cache"
 )

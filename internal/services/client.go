@@ -8,8 +8,8 @@ import (
 	"log"
 	"time"
 
-	"gemini-proxy/internal/config"
-	"gemini-proxy/internal/models"
+	"ai-gateway/internal/config"
+	"ai-gateway/internal/models"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"

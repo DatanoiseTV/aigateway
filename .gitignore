@@ -4,7 +4,7 @@
 *.dll
 *.so
 *.dylib
-gemini-proxy
+ai-gateway
 
 # Test binary
 *.test

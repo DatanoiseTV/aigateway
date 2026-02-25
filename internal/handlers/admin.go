@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"gemini-proxy/internal/config"
-	"gemini-proxy/internal/models"
-	"gemini-proxy/internal/services"
+	"ai-gateway/internal/config"
+	"ai-gateway/internal/models"
+	"ai-gateway/internal/services"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -520,7 +520,7 @@ var adminTemplates = []byte(`
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Login - Gemini Proxy</title>
+    <title>Login - AI Gateway</title>
     <link rel="stylesheet" href="/static/style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -544,7 +544,7 @@ var adminTemplates = []byte(`
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                 </svg>
             </div>
-            <h1 class="text-3xl font-bold text-white">Gemini Proxy</h1>
+            <h1 class="text-3xl font-bold text-white">AI Gateway</h1>
             <p class="text-gray-400 mt-2">Sign in to your admin account</p>
         </div>
         
@@ -572,7 +572,7 @@ var adminTemplates = []byte(`
         </div>
         
         <p class="text-center text-gray-500 text-sm mt-6">
-            Gemini Proxy Gateway
+            AI Gateway Gateway
         </p>
     </div>
 </body>
@@ -585,7 +585,7 @@ var adminTemplates = []byte(`
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Dashboard - Gemini Proxy</title>
+    <title>Dashboard - AI Gateway</title>
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -602,7 +602,7 @@ var adminTemplates = []byte(`
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                         </svg>
                     </div>
-                    <span class="text-xl font-bold text-white">Gemini Proxy</span>
+                    <span class="text-xl font-bold text-white">AI Gateway</span>
                 </div>
                 
                 <div class="flex items-center space-x-1">
@@ -884,7 +884,7 @@ var adminTemplates = []byte(`
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Clients - Gemini Proxy</title>
+    <title>Clients - AI Gateway</title>
     <link rel="stylesheet" href="/static/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>body { font-family: 'Inter', sans-serif; } .hidden { display: none; }</style>
@@ -905,7 +905,7 @@ var adminTemplates = []byte(`
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                         </svg>
                     </div>
-                    <span class="text-xl font-bold text-white">Gemini Proxy</span>
+                    <span class="text-xl font-bold text-white">AI Gateway</span>
                 </div>
                 <div class="flex items-center space-x-1">
                     <a href="/admin/dashboard" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Dashboard</a>
@@ -1071,7 +1071,7 @@ var adminTemplates = []byte(`
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{.Title}} - Gemini Proxy</title>
+    <title>{{.Title}} - AI Gateway</title>
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1308,7 +1308,7 @@ var adminTemplates = []byte(`
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{.Title}} - Gemini Proxy</title>
+    <title>{{.Title}} - AI Gateway</title>
     <link rel="stylesheet" href="/static/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>body { font-family: 'Inter', sans-serif; }</style>
@@ -1367,7 +1367,7 @@ var adminTemplates = []byte(`
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Settings - Gemini Proxy</title>
+    <title>Settings - AI Gateway</title>
     <link rel="stylesheet" href="/static/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>body { font-family: 'Inter', sans-serif; } .hidden { display: none; }</style>
@@ -1446,7 +1446,7 @@ var adminTemplates = []byte(`
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                         </svg>
                     </div>
-                    <span class="text-xl font-bold text-white">Gemini Proxy</span>
+                    <span class="text-xl font-bold text-white">AI Gateway</span>
                 </div>
                 <div class="flex items-center space-x-1">
                     <a href="/admin/dashboard" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Dashboard</a>

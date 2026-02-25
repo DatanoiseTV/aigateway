@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"gemini-proxy/internal/config"
-	"gemini-proxy/internal/models"
+	"ai-gateway/internal/config"
+	"ai-gateway/internal/models"
 
 	"gorm.io/gorm"
 )

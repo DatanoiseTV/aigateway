@@ -3,7 +3,7 @@ package services
 import (
 	"time"
 
-	"gemini-proxy/internal/models"
+	"ai-gateway/internal/models"
 
 	"gorm.io/gorm"
 )

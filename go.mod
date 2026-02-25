@@ -1,4 +1,4 @@
-module gemini-proxy
+module ai-gateway
 
 go 1.24.0
 

@@ -11,12 +11,12 @@ import (
 	"syscall"
 	"time"
 
-	"gemini-proxy/internal/config"
-	"gemini-proxy/internal/handlers"
-	"gemini-proxy/internal/middleware"
-	"gemini-proxy/internal/models"
-	"gemini-proxy/internal/services"
-	"gemini-proxy/internal/templates"
+	"ai-gateway/internal/config"
+	"ai-gateway/internal/handlers"
+	"ai-gateway/internal/middleware"
+	"ai-gateway/internal/models"
+	"ai-gateway/internal/services"
+	"ai-gateway/internal/templates"
 
 	"github.com/go-chi/chi/v5"
 	"gorm.io/driver/sqlite"
@@ -165,5 +165,5 @@ func autoMigrate(db *gorm.DB) error {
 }
 
 func printBanner() {
-	fmt.Println("Gemini Proxy Gateway v" + version + " (" + commit + ")")
+	fmt.Println("AI Gateway v" + version + " (" + commit + ")")
 }
