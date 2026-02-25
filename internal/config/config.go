@@ -209,16 +209,18 @@ func saveConfig(cfg *Config, path string) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	dir := path
-	for i := len(dir) - 1; i >= 0; i-- {
-		if dir[i] == '/' {
-			dir = dir[:i]
+	dir := ""
+	for i := len(path) - 1; i >= 0; i-- {
+		if path[i] == '/' {
+			dir = path[:i]
 			break
 		}
 	}
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
+	if dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create config directory: %w", err)
+		}
 	}
 
 	if err := os.WriteFile(path, data, 0600); err != nil {

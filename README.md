@@ -19,61 +19,22 @@ A secure Go-based API gateway that proxies requests to Google's Gemini API while
 go build -o gemini-proxy ./cmd/server
 ```
 
-### 2. Configure
-
-Copy `config.yaml` and edit with your settings:
-
-```yaml
-server:
-  host: "0.0.0.0"
-  port: 8080
-
-admin:
-  username: "admin"
-  password_hash: "$2y$10$..."  # bcrypt hash
-  session_secret: "change-me"
-
-gemini:
-  api_key: "YOUR-GEMINI-API-KEY"
-  default_model: "gemini-2.0-flash"
-  allowed_models:
-    - "gemini-2.0-flash"
-    - "gemini-2.0-flash-lite"
-
-defaults:
-  rate_limit:
-    requests_per_minute: 60
-    requests_per_hour: 1000
-    requests_per_day: 10000
-  quota:
-    max_input_tokens_per_day: 1000000
-    max_output_tokens_per_day: 500000
-    max_requests_per_day: 1000
-
-database:
-  path: "./data/gateway.db"
-```
-
-Generate a bcrypt password hash:
-
-```bash
-go run -exec "" -c 'package main; import "golang.org/x/crypto/bcrypt"; import "fmt"; func main() {hash, _ := bcrypt.GenerateFromPassword([]byte("your-password"), bcrypt.DefaultCost); fmt.Println(string(hash))}'
-```
-
-Or use an online bcrypt generator.
-
-### 3. Run
+### 2. Run
 
 ```bash
 ./gemini-proxy
 ```
 
-The server will start on `http://localhost:8080`
+On first run, the server will automatically:
+- Create a `config.yaml` with default settings
+- Generate a random admin password
+- Create the data directory
 
-### 4. Access Admin UI
+The password will be displayed in the console - save it!
+
+### 3. Access Admin UI
 
 - URL: `http://localhost:8080/admin`
-- Login with the credentials from your config
 
 ## API Usage
 
