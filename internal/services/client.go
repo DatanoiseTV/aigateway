@@ -22,8 +22,8 @@ func NewClientService(db *gorm.DB) *ClientService {
 	return &ClientService{db: db}
 }
 
-func (s *ClientService) CreateClient(name, description string, cfg *config.Config) (*models.Client, string, error) {
-	apiKey := generateAPIKey()
+func (s *ClientService) CreateClient(name, description, keyType string, cfg *config.Config) (*models.Client, string, error) {
+	apiKey := GenerateAPIKey(keyType)
 	apiKeyHash := hashAPIKey(apiKey)
 
 	client := &models.Client{
@@ -93,8 +93,8 @@ func (s *ClientService) DeleteClient(id string) error {
 	return s.db.Delete(&models.Client{}, "id = ?", id).Error
 }
 
-func (s *ClientService) RegenerateAPIKey(clientID string) (string, error) {
-	apiKey := generateAPIKey()
+func (s *ClientService) RegenerateAPIKey(clientID, keyType string) (string, error) {
+	apiKey := GenerateAPIKey(keyType)
 	apiKeyHash := hashAPIKey(apiKey)
 
 	err := s.db.Model(&models.Client{}).Where("id = ?", clientID).Updates(map[string]interface{}{
@@ -119,8 +119,19 @@ func (s *ClientService) GetClientsByIDs(ids []string) ([]models.Client, error) {
 	return clients, err
 }
 
+func GenerateAPIKey(keyType string) string {
+	switch keyType {
+	case "anthropic":
+		return "sk-ant-" + uuid.New().String()
+	case "openai":
+		return "sk-" + uuid.New().String()
+	default:
+		return "gm_" + uuid.New().String()
+	}
+}
+
 func generateAPIKey() string {
-	return "gm_" + uuid.New().String()
+	return GenerateAPIKey("gemini")
 }
 
 func hashAPIKey(apiKey string) []byte {

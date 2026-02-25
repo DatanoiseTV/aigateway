@@ -190,13 +190,17 @@ func (h *AdminHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	name := r.Form.Get("name")
 	description := r.Form.Get("description")
+	keyType := r.Form.Get("key_type")
+	if keyType == "" {
+		keyType = "gemini"
+	}
 
 	if name == "" {
 		http.Error(w, "Name is required", http.StatusBadRequest)
 		return
 	}
 
-	client, apiKey, err := h.clientService.CreateClient(name, description, h.cfg)
+	client, apiKey, err := h.clientService.CreateClient(name, description, keyType, h.cfg)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -307,8 +311,13 @@ func (h *AdminHandler) DeleteClient(w http.ResponseWriter, r *http.Request) {
 
 func (h *AdminHandler) RegenerateKey(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	r.ParseForm()
+	keyType := r.Form.Get("key_type")
+	if keyType == "" {
+		keyType = "gemini"
+	}
 
-	apiKey, err := h.clientService.RegenerateAPIKey(id)
+	apiKey, err := h.clientService.RegenerateAPIKey(id, keyType)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -904,6 +913,14 @@ var adminTemplates = []byte(`
                     <label class="block text-gray-300 text-sm font-medium mb-2">Name</label>
                     <input type="text" name="name" required placeholder="My App" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
+                <div class="mb-4">
+                    <label class="block text-gray-300 text-sm font-medium mb-2">API Key Type</label>
+                    <select name="key_type" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="gemini">gm_ (Gemini style)</option>
+                        <option value="openai">sk- (OpenAI style)</option>
+                        <option value="anthropic">sk-ant- (Anthropic style)</option>
+                    </select>
+                </div>
                 <div class="mb-6">
                     <label class="block text-gray-300 text-sm font-medium mb-2">Description</label>
                     <textarea name="description" placeholder="Optional description" rows="2" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
@@ -1083,7 +1100,12 @@ var adminTemplates = []byte(`
                                 <p class="text-white font-medium">Regenerate API Key</p>
                                 <p class="text-gray-500 text-sm">Invalidates the current key and generates a new one</p>
                             </div>
-                            <form method="POST" action="/admin/clients/{{(index .Data "Client").ID}}/regenerate">
+                            <form method="POST" action="/admin/clients/{{(index .Data "Client").ID}}/regenerate" class="flex items-center space-x-2">
+                                <select name="key_type" class="px-3 py-2 bg-gray-800 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                                    <option value="gemini">gm_</option>
+                                    <option value="openai">sk-</option>
+                                    <option value="anthropic">sk-ant-</option>
+                                </select>
                                 <button type="submit" class="px-4 py-2 bg-yellow-600/20 text-yellow-400 border border-yellow-600/50 rounded-lg hover:bg-yellow-600/30 transition-colors">Regenerate</button>
                             </form>
                         </div>

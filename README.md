@@ -34,14 +34,14 @@ The password will be displayed in the console - save it!
 
 ### 3. Access Admin UI
 
-- URL: `http://localhost:8080/admin`
+- URL: `http://localhost:8090/admin`
 
 ## API Usage
 
 ### Generate Content
 
 ```bash
-curl -X POST http://localhost:8080/v1beta/models/gemini-2.0-flash:generateContent \
+curl -X POST http://localhost:8090/v1beta/models/gemini-2.0-flash:generateContent \
   -H "Authorization: Bearer YOUR-CLIENT-API-KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -54,7 +54,7 @@ curl -X POST http://localhost:8080/v1beta/models/gemini-2.0-flash:generateConten
 ### List Models
 
 ```bash
-curl http://localhost:8080/v1beta/models \
+curl http://localhost:8090/v1beta/models \
   -H "Authorization: Bearer YOUR-CLIENT-API-KEY"
 ```
 
@@ -63,7 +63,7 @@ curl http://localhost:8080/v1beta/models \
 | Option | Description | Default |
 |--------|-------------|---------|
 | `server.host` | Listen host | `0.0.0.0` |
-| `server.port` | Listen port | `8080` |
+| `server.port` | Listen port | `8090` |
 | `server.https.enabled` | Enable HTTPS | `false` |
 | `server.https.cert_file` | TLS certificate path | - |
 | `server.https.key_file` | TLS key path | - |
