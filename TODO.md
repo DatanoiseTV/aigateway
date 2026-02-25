@@ -18,6 +18,10 @@
 - [x] Real-time chunk translation from Gemini SSE to OpenAI SSE format
 - [x] Split handler into streaming/non-streaming paths
 - [x] Token counting and request logging for streamed responses
+- [x] Real-time dashboard via WebSocket (stats cards, recent requests table, model chart)
+- [x] WebSocket hub with debounced broadcasting on every logged request
+- [x] Auto-reconnect on disconnect (3s backoff)
+- [x] Allow All / Clear All buttons for model selection in settings page
 
 ### Next Steps
 - Test the application to verify key type selection works
