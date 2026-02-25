@@ -423,9 +423,9 @@ var adminTemplates = []byte(`
         
         <div class="bg-gray-800/50 backdrop-blur-sm border border-gray-700 rounded-2xl p-8">
             <form method="POST" action="/admin/login">
-                <input type="hidden" name="csrf_token" value="{{.">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
                 
-                <div class="mbCSRFToken}}-6">
+                <div class="mb-6">
                     <label class="block text-gray-300 text-sm font-medium mb-2">Username</label>
                     <input type="text" name="username" placeholder="admin" 
                         class="w-full px-4 py-3 bg-gray-900/50 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
