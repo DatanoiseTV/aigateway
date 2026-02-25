@@ -1,114 +1,146 @@
 # AI Gateway
 
-A multi-backend AI API gateway written in Go. Routes OpenAI-compatible requests to any upstream LLM provider with per-client authentication, rate limiting, usage quotas, and a real-time admin dashboard.
+A lightweight, self-hosted API gateway that sits between your applications and LLM providers. It exposes an OpenAI-compatible API and routes requests to the configured upstream backend -- Google Gemini, OpenAI, Anthropic, Mistral, Perplexity, xAI, Cohere, Azure OpenAI, Ollama, or LM Studio.
 
-Each client gets its own API key, backend provider, rate limits, token quotas, and optional system prompt injection -- all managed through the web UI.
+Each client gets its own API key, backend assignment, rate limits, token quotas, and optional system prompt. Everything is managed through a built-in admin dashboard with real-time usage monitoring.
 
-## Supported Backends
+---
 
-| Provider | Type | Auth | Streaming |
-|----------|------|------|-----------|
-| **Google Gemini** | Native Gemini API | API key | SSE via `streamGenerateContent` |
-| **OpenAI** | Chat Completions | Bearer token | SSE |
-| **Anthropic** | Messages API | `x-api-key` header | SSE |
-| **Mistral** | OpenAI-compatible | Bearer token | SSE |
-| **Ollama** | OpenAI-compatible (local) | None | SSE |
-| **LM Studio** | OpenAI-compatible (local) | None | SSE |
+## Supported Providers
 
-Any OpenAI-compatible backend not listed above can be added through the settings UI by choosing the appropriate base type.
+| Provider | Protocol | Default Endpoint | Auth |
+|---|---|---|---|
+| Google Gemini | Gemini native | `generativelanguage.googleapis.com` | API key |
+| OpenAI | Chat Completions | `api.openai.com` | Bearer token |
+| Anthropic | Messages API | `api.anthropic.com` | `x-api-key` |
+| Mistral | Chat Completions | `api.mistral.ai` | Bearer token |
+| Perplexity AI | Chat Completions | `api.perplexity.ai` | Bearer token |
+| xAI / Grok | Chat Completions | `api.x.ai` | Bearer token |
+| Cohere | Chat Completions | `api.cohere.com` | Bearer token |
+| Azure OpenAI | Chat Completions | Custom resource URL | `api-key` |
+| Ollama | Chat Completions | `localhost:11434` | None |
+| LM Studio | Chat Completions | `localhost:1234` | None |
 
-## Features
+All providers support streaming via Server-Sent Events. Any OpenAI-compatible endpoint not listed above can be added as a generic provider.
 
-- **Multi-Backend Routing** -- each client can be assigned a different upstream provider
-- **Per-Client System Prompt** -- inject a system message on every request (guardrails, personas, instructions)
-- **Per-Client Base URL Override** -- point individual clients at different Ollama/LM Studio instances
-- **OpenAI-Compatible API** -- clients connect using any OpenAI SDK or tool (`/v1/chat/completions`, `/chat/completions`)
-- **Real-Time Streaming** -- true token-by-token streaming from upstream to client via SSE
-- **API Key Authentication** -- SHA-256 hashed keys with configurable prefixes (`gm_`, `sk-`, `sk-ant-`)
-- **Rate Limiting** -- configurable per-minute, per-hour, and per-day limits per client
-- **Token Quotas** -- daily input/output token limits and per-request max token caps
-- **Real-Time Dashboard** -- WebSocket-powered live stats, request log, and model usage chart
-- **Admin Web UI** -- manage clients, providers, settings, and view usage from the browser
-- **SQLite Database** -- zero-dependency embedded storage, no external database required
-- **Gemini Native Proxy** -- direct passthrough for Gemini API format (`/v1beta/models/:model:generateContent`)
-- **HTTPS Support** -- optional TLS with cert/key configuration
-- **Security Headers** -- HSTS, X-Frame-Options, CSP, and more on every response
+---
 
-## Quick Start
+## Getting Started
 
-### Build
+### Download
 
-```bash
+Grab a binary from the [releases page](https://github.com/DatanoiseTV/aigateway/releases) or build from source:
+
+```
 go build -o ai-gateway ./cmd/server
 ```
 
 ### Run
 
-```bash
+```
 ./ai-gateway
 ```
 
-On first run the server will:
-1. Create `config.yaml` with default settings
-2. Generate a random admin password (printed to the console -- save it)
-3. Create `data/` and `logs/` directories
+On first launch the server creates a `config.yaml`, generates admin credentials (printed once to stdout), and initializes the database. Default port is `8090`.
 
-### Access the Admin UI
+### Configure
 
-Open `http://localhost:8090/admin` and log in with the generated credentials.
+Open `http://localhost:8090/admin`, log in, and:
 
-From the dashboard you can:
-- Add backend providers (Gemini, OpenAI, Anthropic, Mistral, Ollama, LM Studio)
-- Create client API keys with per-client backend, rate limits, and quotas
-- Configure per-client system prompts
-- Monitor usage in real time
+1. Go to **Settings** -- add your provider API keys
+2. Go to **Clients** -- create API keys for your applications
+3. Point your OpenAI SDK at `http://localhost:8090/v1` with the client key
 
-## API Usage
+---
 
-### OpenAI-Compatible Chat Completions
+## Usage
 
-Any OpenAI client library or tool works out of the box. Point it at the gateway and use the client's API key.
+### Chat Completions
+
+Works with any OpenAI-compatible client library or tool.
 
 ```bash
-curl -X POST http://localhost:8090/v1/chat/completions \
-  -H "Authorization: Bearer YOUR-CLIENT-API-KEY" \
+curl http://localhost:8090/v1/chat/completions \
+  -H "Authorization: Bearer <CLIENT_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemini-2.0-flash",
-    "messages": [
-      {"role": "user", "content": "Hello, how are you?"}
-    ],
-    "stream": true
+    "model": "gemini-2.5-flash",
+    "stream": true,
+    "messages": [{"role": "user", "content": "Hello"}]
   }'
 ```
 
-The gateway resolves the client's backend provider from the API key, translates the request into the provider's native format, streams the response back as OpenAI-format SSE, and logs the usage.
+The gateway resolves the client's assigned backend from the API key, translates the request into the provider's native format, and streams the response back as OpenAI-format SSE.
 
-### Streaming
+### Python (OpenAI SDK)
 
-Set `"stream": true` in the request body. The gateway will stream tokens from the upstream provider to the client in real time using Server-Sent Events.
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="<CLIENT_API_KEY>",
+    base_url="http://localhost:8090/v1",
+)
+
+stream = client.chat.completions.create(
+    model="gemini-2.5-flash",
+    messages=[{"role": "user", "content": "Hello"}],
+    stream=True,
+)
+
+for chunk in stream:
+    print(chunk.choices[0].delta.content or "", end="")
+```
 
 ### Gemini Native API
 
-For clients that speak the Gemini protocol directly:
+Direct passthrough for applications that use the Gemini protocol:
 
 ```bash
-curl -X POST http://localhost:8090/v1beta/models/gemini-2.0-flash:generateContent \
-  -H "Authorization: Bearer YOUR-CLIENT-API-KEY" \
+curl http://localhost:8090/v1beta/models/gemini-2.5-flash:generateContent \
+  -H "Authorization: Bearer <CLIENT_API_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{
-    "contents": [{"parts": [{"text": "Hello"}]}]
-  }'
+  -d '{"contents": [{"parts": [{"text": "Hello"}]}]}'
 ```
 
 ### List Models
 
 ```bash
 curl http://localhost:8090/v1/models \
-  -H "Authorization: Bearer YOUR-CLIENT-API-KEY"
+  -H "Authorization: Bearer <CLIENT_API_KEY>"
 ```
 
 Returns models from all configured providers.
+
+---
+
+## Per-Client Features
+
+Each client (API key) has independent configuration:
+
+| Feature | Description |
+|---|---|
+| **Backend Provider** | Route requests to any configured provider |
+| **System Prompt** | Injected as a system message on every request |
+| **Base URL Override** | Point at a specific Ollama/LM Studio instance |
+| **Rate Limits** | Per-minute, per-hour, per-day request caps |
+| **Token Quotas** | Daily input/output token budgets |
+| **Max Tokens** | Per-request input/output token limits |
+| **API Key Prefix** | `gm_`, `sk-`, or `sk-ant-` style keys |
+| **Active/Inactive** | Disable a key without deleting it |
+
+---
+
+## Admin Dashboard
+
+The web UI at `/admin` provides:
+
+- **Real-time stats** -- requests, tokens, and model usage updating live via WebSocket
+- **Client management** -- create, edit, disable, and delete clients
+- **Provider settings** -- add and configure backend providers
+- **Request history** -- per-client and global request logs with status, latency, and token counts
+
+---
 
 ## Configuration
 
@@ -120,54 +152,49 @@ server:
   port: 8090
   https:
     enabled: false
-    cert_file: ""
-    key_file: ""
-
-admin:
-  username: admin
-  password_hash: ""      # auto-generated on first run
-  session_secret: ""     # auto-generated on first run
 
 providers:
   gemini:
     type: gemini
     api_key: ""
-    default_model: gemini-2.0-flash
-    allowed_models:
-      - gemini-2.0-flash
-      - gemini-2.5-flash
-      - gemini-2.5-pro
+    default_model: gemini-2.5-flash
     timeout_seconds: 120
-
   openai:
     type: openai
     api_key: ""
     default_model: gpt-4o
-    timeout_seconds: 120
-
   anthropic:
     type: anthropic
     api_key: ""
     default_model: claude-sonnet-4-20250514
-    timeout_seconds: 120
-
   mistral:
     type: mistral
     api_key: ""
     default_model: mistral-large-latest
-    timeout_seconds: 120
-
+  perplexity:
+    type: perplexity
+    api_key: ""
+    default_model: sonar-pro
+  xai:
+    type: xai
+    api_key: ""
+    default_model: grok-3
+  cohere:
+    type: cohere
+    api_key: ""
+    default_model: command-r-plus
+  azure:
+    type: azure-openai
+    api_key: ""
+    base_url: https://YOUR_RESOURCE.openai.azure.com
+    default_model: gpt-4o
   ollama:
     type: ollama
     base_url: http://localhost:11434/v1
     default_model: llama3.2
-    timeout_seconds: 120
-
   lmstudio:
     type: lmstudio
     base_url: http://localhost:1234/v1
-    default_model: default
-    timeout_seconds: 120
 
 defaults:
   rate_limit:
@@ -178,91 +205,116 @@ defaults:
     max_input_tokens_per_day: 1000000
     max_output_tokens_per_day: 500000
     max_requests_per_day: 1000
-    max_input_tokens: 1000000
-    max_output_tokens: 8192
 
 database:
   path: ./data/gateway.db
-
-logging:
-  level: info
-  file: ./logs/gateway.log
 ```
 
-Providers can also be added and edited through the admin UI at `/admin/settings`.
-
-### Per-Client Settings
-
-Each client has:
-
-| Setting | Description |
-|---------|-------------|
-| **Backend** | Which provider to route requests through |
-| **Base URL Override** | Custom endpoint for local backends (Ollama, LM Studio) |
-| **System Prompt** | Prepended as a system message to every request |
-| **Rate Limits** | Requests per minute / hour / day |
-| **Token Quotas** | Daily input/output token limits |
-| **Max Tokens** | Per-request input/output token caps |
-| **API Key Type** | Prefix style: `gm_`, `sk-`, or `sk-ant-` |
+Providers can also be added and configured through the admin UI. Only add the providers you need.
 
 ### CLI Flags
 
+| Flag | Description | Default |
+|---|---|---|
+| `-config` | Config file path | `config.yaml` |
+| `-port` | Port override | from config |
+
+### HTTPS
+
+```yaml
+server:
+  https:
+    enabled: true
+    cert_file: /path/to/cert.pem
+    key_file: /path/to/key.pem
 ```
--config string    Path to config file (default "config.yaml")
--port int         Port override (overrides config value)
+
+---
+
+## Building
+
+### From Source
+
 ```
+make build
+```
+
+Version, commit hash, and build time are embedded automatically via ldflags.
+
+### Cross-Compile
+
+```
+make release
+```
+
+Produces binaries for Linux (amd64, arm64), macOS (amd64, arm64), and Windows (amd64) in `dist/`.
+
+### Docker (planned)
+
+Not yet available. Contributions welcome.
+
+---
 
 ## Architecture
 
 ```
-Client (OpenAI SDK, curl, etc.)
-  |
-  v
-AI Gateway (:8090)
-  |-- /v1/chat/completions    --> Per-client provider routing
-  |-- /chat/completions       --> Same, without /v1 prefix
-  |-- /v1beta/models/:model   --> Gemini native passthrough
-  |-- /admin/*                --> Web UI + WebSocket dashboard
-  |
-  +--> Provider Registry
-        |-- gemini    --> Google Gemini API
-        |-- openai    --> OpenAI API
-        |-- anthropic --> Anthropic Messages API
-        |-- mistral   --> Mistral API
-        |-- ollama    --> Local Ollama instance
-        |-- lmstudio  --> Local LM Studio instance
+                        +------------------+
+                        |   Admin Web UI   |
+                        |  (WebSocket live |
+                        |    dashboard)    |
+                        +--------+---------+
+                                 |
+Clients -----> AI Gateway (:8090)
+  |              |
+  | OpenAI API   +---> Provider Registry
+  | (any SDK)    |       |-- gemini     --> Google Gemini API
+  |              |       |-- openai     --> OpenAI
+  | Gemini API   |       |-- anthropic  --> Anthropic
+  | (native)     |       |-- mistral    --> Mistral
+                 |       |-- perplexity --> Perplexity AI
+                 |       |-- xai        --> xAI / Grok
+                 |       |-- cohere     --> Cohere
+                 |       |-- azure      --> Azure OpenAI
+                 |       |-- ollama     --> Ollama (local)
+                 |       +-- lmstudio   --> LM Studio (local)
+                 |
+                 +---> SQLite (clients, usage, logs)
 ```
+
+---
 
 ## Project Structure
 
 ```
-.
-├── cmd/server/              Main entry point
-├── internal/
-│   ├── config/              Configuration loading and migration
-│   ├── handlers/            HTTP handlers (OpenAI compat, Gemini proxy, admin UI)
-│   ├── middleware/          Auth, rate limiting, security headers, logging
-│   ├── models/              Database models (Client, RequestLog, DailyUsage)
-│   ├── providers/           Backend provider interface and implementations
-│   │   ├── provider.go      Interface, registry, factory
-│   │   ├── gemini.go        Google Gemini provider
-│   │   ├── openai_compat.go OpenAI/Mistral/Ollama/LM Studio provider
-│   │   └── anthropic.go     Anthropic Messages API provider
-│   ├── services/            Business logic (logging, stats, WS hub)
-│   └── templates/           Embedded static assets
-├── config.yaml              Configuration file
-├── data/                    SQLite database
-└── logs/                    Request logs
+cmd/server/              Entry point
+internal/
+  config/                Config loading, migration, defaults
+  handlers/              HTTP handlers (chat completions, proxy, admin)
+  middleware/            Auth, rate limiting, security, logging
+  models/                Database models
+  providers/             Backend provider interface + implementations
+    provider.go          Interface, registry, factory
+    gemini.go            Google Gemini
+    openai_compat.go     OpenAI, Mistral, Perplexity, xAI, Cohere, Ollama, LM Studio
+    anthropic.go         Anthropic
+    azure_openai.go      Azure OpenAI
+  services/              Request logging, stats, WebSocket hub
+  templates/             Embedded static assets
 ```
+
+---
 
 ## Security
 
-- API keys are stored as SHA-256 hashes (never in plaintext)
-- Admin sessions use secure, HTTP-only cookies with configurable secret
-- All responses include security headers (HSTS, X-Frame-Options, CSP, etc.)
-- Per-client rate limiting prevents abuse
-- Request body size is capped at 10MB
-- Provider API keys are stored in config.yaml (file permissions: 0600)
+- Client API keys are stored as SHA-256 hashes
+- Admin sessions use signed, HTTP-only cookies
+- Security headers on every response (HSTS, X-Frame-Options, X-Content-Type-Options)
+- Per-client rate limiting and quota enforcement
+- Request body size capped at 10 MB
+- Provider API keys stored in `config.yaml` with `0600` file permissions
+- System prompt injection allows enforcing guardrails per client
+
+---
 
 ## License
 

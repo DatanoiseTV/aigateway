@@ -36,7 +36,8 @@ logs/
 data/*.db
 data/*.db-journal
 
-# Config with secrets (keep config.yaml as template)
+# Config with secrets
+config.yaml
 config.local.yaml
 
 # Build

@@ -32,6 +32,10 @@
 - [x] Per-client base URL override for local backends (cfcae4e)
 - [x] Admin UI for backend selection, system prompt, and multi-provider settings (4201da0)
 - [x] Revamp README with full feature documentation
+- [x] Add Perplexity AI, xAI/Grok, Cohere, Azure OpenAI providers (f6fb2f4)
+- [x] GitHub Actions CI/CD: build on push, release binaries on tag
+- [x] Makefile for local build and cross-compilation
+- [x] config.example.yaml for safe distribution
 
 ### Next Steps
 - Test streaming with all provider backends
@@ -39,3 +43,4 @@
 - Add ability to remove providers from settings UI
 - Add model list fetching for non-Gemini providers
 - Add request log filtering by backend provider
+- Dockerfile for container deployments
