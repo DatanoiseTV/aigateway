@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -89,10 +91,13 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	log.Printf("[CHAT] Model: %s, Messages: %d", req.Model, len(req.Messages))
+
 	model := h.mapModel(req.Model)
 	if model == "" {
 		model = h.geminiService.GetDefaultModel()
 	}
+	log.Printf("[CHAT] Mapped to Gemini model: %s", model)
 
 	var prompt string
 	for _, msg := range req.Messages {
@@ -100,6 +105,8 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 		content, _ := msg["content"].(string)
 		prompt += role + ": " + content + "\n"
 	}
+
+	log.Printf("[CHAT] Prompt: %s...", prompt[:min(100, len(prompt))])
 
 	geminiReq := map[string]interface{}{
 		"contents": []map[string]interface{}{
@@ -127,6 +134,8 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 	start := time.Now()
 	respBody, statusCode, err := h.geminiService.ForwardRequest(model, geminiBody)
 	latencyMs := int(time.Since(start).Milliseconds())
+
+	log.Printf("[CHAT] Gemini response status: %d, latency: %dms, body: %s", statusCode, latencyMs, string(respBody)[:min(200, len(string(respBody)))])
 
 	inputTokens, outputTokens, _ := services.ParseGeminiResponse(respBody)
 
@@ -178,6 +187,10 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("openai-organization", "gemini-proxy")
+	w.Header().Set("openai-version", "2020-10-01")
+	w.Header().Set("x-request-id", response.ID)
+	w.Header().Set("openai-processing-ms", fmt.Sprintf("%d", latencyMs))
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
 }
