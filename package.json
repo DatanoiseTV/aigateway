@@ -1,0 +1,16 @@
+{
+  "name": "meetingassistant-gateway",
+  "version": "1.0.0",
+  "description": "A secure Go-based API gateway that proxies requests to Google's Gemini API while providing per-client authentication, rate limiting, and usage quotas.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "tailwindcss": "^4.2.1"
+  }
+}

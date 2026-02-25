@@ -23,16 +23,18 @@ func NewProxyHandler(geminiService *services.GeminiService) *ProxyHandler {
 }
 
 func (h *ProxyHandler) RegisterRoutes(r chi.Router) {
-	r.Route("/v1beta", func(r chi.Router) {
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.Recovery)
+	for _, prefix := range []string{"/v1", "/v1beta"} {
+		r.Route(prefix, func(r chi.Router) {
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.Recovery)
 
-			r.Post("/models/{model}:generateContent", h.GenerateContent)
-			r.Post("/models/{model}:streamGenerateContent", h.StreamGenerateContent)
-			r.Get("/models", h.ListModels)
-			r.Get("/models/{model}", h.GetModel)
+				r.Post("/models/{model}:generateContent", h.GenerateContent)
+				r.Post("/models/{model}:streamGenerateContent", h.StreamGenerateContent)
+				r.Get("/models", h.ListModels)
+				r.Get("/models/{model}", h.GetModel)
+			})
 		})
-	})
+	}
 }
 
 func (h *ProxyHandler) GenerateContent(w http.ResponseWriter, r *http.Request) {

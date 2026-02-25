@@ -16,6 +16,7 @@ import (
 	"gemini-proxy/internal/middleware"
 	"gemini-proxy/internal/models"
 	"gemini-proxy/internal/services"
+	"gemini-proxy/internal/templates"
 
 	"github.com/go-chi/chi/v5"
 	"gorm.io/driver/sqlite"
@@ -84,6 +85,8 @@ func main() {
 		log.Fatalf("Failed to initialize admin handler: %v", err)
 	}
 	adminHandler.RegisterRoutes(router)
+
+	router.Handle("/static/*", http.FileServer(http.FS(templates.Static)))
 
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
