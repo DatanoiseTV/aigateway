@@ -56,6 +56,27 @@ func NewLMStudioProvider(name string, cfg config.ProviderConfig) *OpenAICompatPr
 	return &OpenAICompatProvider{name: name, cfg: cfg}
 }
 
+func NewPerplexityProvider(cfg config.ProviderConfig) *OpenAICompatProvider {
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = "https://api.perplexity.ai"
+	}
+	return &OpenAICompatProvider{name: "perplexity", cfg: cfg}
+}
+
+func NewXAIProvider(cfg config.ProviderConfig) *OpenAICompatProvider {
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = "https://api.x.ai/v1"
+	}
+	return &OpenAICompatProvider{name: "xai", cfg: cfg}
+}
+
+func NewCohereProvider(cfg config.ProviderConfig) *OpenAICompatProvider {
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = "https://api.cohere.com/v2"
+	}
+	return &OpenAICompatProvider{name: "cohere", cfg: cfg}
+}
+
 func (p *OpenAICompatProvider) Name() string { return p.name }
 
 // WithBaseURL returns a new provider instance with the given base URL, keeping

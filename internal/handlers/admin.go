@@ -1613,6 +1613,10 @@ var adminTemplates = []byte(`
                             <option value="openai">OpenAI</option>
                             <option value="anthropic">Anthropic</option>
                             <option value="mistral">Mistral</option>
+                            <option value="perplexity">Perplexity AI</option>
+                            <option value="xai">xAI / Grok</option>
+                            <option value="cohere">Cohere</option>
+                            <option value="azure-openai">Azure OpenAI</option>
                             <option value="ollama">Ollama</option>
                             <option value="lmstudio">LM Studio</option>
                         </select>

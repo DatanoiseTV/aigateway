@@ -132,6 +132,14 @@ func BuildRegistry(cfg *config.Config) *Registry {
 			p = NewOllamaProvider(name, pcfg)
 		case "lmstudio":
 			p = NewLMStudioProvider(name, pcfg)
+		case "perplexity":
+			p = NewPerplexityProvider(pcfg)
+		case "xai":
+			p = NewXAIProvider(pcfg)
+		case "cohere":
+			p = NewCohereProvider(pcfg)
+		case "azure-openai":
+			p = NewAzureOpenAIProvider(pcfg)
 		default:
 			// Treat unknown types as OpenAI-compatible
 			p = NewOpenAIProvider(name, pcfg)
