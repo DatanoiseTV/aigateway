@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"gemini-proxy/internal/middleware"
+	"gemini-proxy/internal/models"
 	"gemini-proxy/internal/services"
 
 	"github.com/go-chi/chi/v5"
@@ -210,6 +212,17 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 
 	geminiBody, _ := json.Marshal(geminiReq)
 
+	if req.Stream {
+		h.handleStreamingRequest(w, r, client, req, model, geminiBody)
+		return
+	}
+
+	h.handleNonStreamingRequest(w, client, req, model, geminiBody)
+}
+
+// handleNonStreamingRequest calls Gemini's generateContent endpoint and returns
+// the full response as an OpenAI JSON response.
+func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client *models.Client, req OpenAIChatRequest, model string, geminiBody []byte) {
 	start := time.Now()
 	respBody, statusCode, err := h.geminiService.ForwardRequest(model, geminiBody)
 	latencyMs := int(time.Since(start).Milliseconds())
@@ -223,45 +236,25 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 	log.Printf("[CHAT] Gemini response status: %d, latency: %dms, body: %s", statusCode, latencyMs, string(respBody)[:min(200, len(string(respBody)))])
 
 	if statusCode >= 400 {
-		var geminiErr map[string]interface{}
-		json.Unmarshal(respBody, &geminiErr)
-
-		errMsg := "Gemini API error"
-		if errObj, ok := geminiErr["error"].(map[string]interface{}); ok {
-			if msg, ok := errObj["message"].(string); ok {
-				errMsg = msg
-			}
-		}
-
+		errMsg := extractGeminiErrorMessage(respBody)
 		log.Printf("[CHAT] Gemini error: %s", errMsg)
-
 		httpStatus := mapGeminiStatusToHTTP(statusCode)
 		writeOpenAIError(w, httpStatus, errMsg, "api_error")
 		return
 	}
 
 	inputTokens, outputTokens, _ := services.ParseGeminiResponse(respBody)
-
 	h.geminiService.LogRequest(client.ID, model, statusCode, inputTokens, outputTokens, latencyMs, "")
 
-	// Extract response text from Gemini response
 	responseText := extractGeminiText(respBody)
-
 	responseID := "chatcmpl-" + randomID(12)
-	created := time.Now().Unix()
 
 	log.Printf("[CHAT] Sending response: text length=%d", len(responseText))
 
-	if req.Stream {
-		h.writeStreamResponse(w, responseID, req.Model, created, responseText, inputTokens, outputTokens)
-		return
-	}
-
-	// Non-streaming response
 	response := OpenAIChatResponse{
 		ID:      responseID,
 		Object:  "chat.completion",
-		Created: created,
+		Created: time.Now().Unix(),
 		Model:   req.Model,
 		Choices: []map[string]interface{}{
 			{
@@ -284,71 +277,112 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(response)
 }
 
-// writeStreamResponse sends the response in OpenAI SSE streaming format.
-// The spec requires: first chunk with role, content chunks with delta text, final chunk with finish_reason.
-func (h *OpenAIHandler) writeStreamResponse(w http.ResponseWriter, id, model string, created int64, text string, inputTokens, outputTokens int) {
+// handleStreamingRequest calls Gemini's streamGenerateContent endpoint with alt=sse
+// and translates each Gemini SSE chunk into OpenAI-format SSE chunks in real time.
+func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Request, client *models.Client, req OpenAIChatRequest, model string, geminiBody []byte) {
+	start := time.Now()
+
+	resp, resolvedModel, err := h.geminiService.ForwardStreamRequest(model, geminiBody)
+	if err != nil {
+		log.Printf("[CHAT] ForwardStreamRequest error: %v", err)
+		writeOpenAIError(w, http.StatusBadGateway, "Upstream request failed: "+err.Error(), "api_error")
+		return
+	}
+	defer resp.Body.Close()
+
+	// If Gemini returned an error status, read the body and return error
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		latencyMs := int(time.Since(start).Milliseconds())
+		log.Printf("[CHAT] Gemini stream error status: %d, latency: %dms, body: %s", resp.StatusCode, latencyMs, string(body)[:min(200, len(string(body)))])
+
+		errMsg := extractGeminiErrorMessage(body)
+		log.Printf("[CHAT] Gemini error: %s", errMsg)
+		httpStatus := mapGeminiStatusToHTTP(resp.StatusCode)
+		writeOpenAIError(w, httpStatus, errMsg, "api_error")
+		return
+	}
+
+	// Set up SSE headers for the client
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("x-request-id", id)
+
+	responseID := "chatcmpl-" + randomID(12)
+	created := time.Now().Unix()
+	w.Header().Set("x-request-id", responseID)
 	w.WriteHeader(http.StatusOK)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		log.Printf("[CHAT] ResponseWriter does not implement http.Flusher, falling back to non-streaming")
-		writeOpenAIError(w, http.StatusInternalServerError, "Streaming not supported", "api_error")
+		log.Printf("[CHAT] ResponseWriter does not implement http.Flusher")
 		return
 	}
 
-	// First chunk: send role
-	roleChunk := map[string]interface{}{
-		"id":      id,
-		"object":  "chat.completion.chunk",
-		"created": created,
-		"model":   model,
-		"choices": []map[string]interface{}{
-			{
-				"index":         0,
-				"delta":         map[string]interface{}{"role": "assistant", "content": ""},
-				"finish_reason": nil,
-			},
-		},
-	}
-	data, _ := json.Marshal(roleChunk)
-	fmt.Fprintf(w, "data: %s\n\n", data)
-	flusher.Flush()
+	// Send the initial role chunk
+	sendSSEChunk(w, flusher, responseID, req.Model, created, map[string]interface{}{"role": "assistant", "content": ""}, nil)
 
-	// Content chunk: send the full text content as a single delta
-	if text != "" {
-		contentChunk := map[string]interface{}{
-			"id":      id,
-			"object":  "chat.completion.chunk",
-			"created": created,
-			"model":   model,
-			"choices": []map[string]interface{}{
-				{
-					"index":         0,
-					"delta":         map[string]interface{}{"content": text},
-					"finish_reason": nil,
-				},
-			},
+	// Read Gemini SSE stream and forward chunks
+	// With alt=sse, Gemini sends lines like: "data: {json}\n\n"
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
+
+	var inputTokens, outputTokens int
+	chunkCount := 0
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// SSE format: lines starting with "data: " contain the JSON payload
+		if !strings.HasPrefix(line, "data: ") {
+			continue
 		}
-		data, _ = json.Marshal(contentChunk)
-		fmt.Fprintf(w, "data: %s\n\n", data)
-		flusher.Flush()
+
+		jsonData := strings.TrimPrefix(line, "data: ")
+		if jsonData == "" {
+			continue
+		}
+
+		// Parse the Gemini chunk
+		var geminiChunk map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonData), &geminiChunk); err != nil {
+			log.Printf("[CHAT] Failed to parse Gemini stream chunk: %v", err)
+			continue
+		}
+
+		// Extract text from this chunk
+		text := extractGeminiTextFromChunk(geminiChunk)
+		if text != "" {
+			chunkCount++
+			sendSSEChunk(w, flusher, responseID, req.Model, created, map[string]interface{}{"content": text}, nil)
+		}
+
+		// Extract token counts from usageMetadata (present in the last chunk)
+		if usage, ok := geminiChunk["usageMetadata"].(map[string]interface{}); ok {
+			if pt, ok := usage["promptTokenCount"].(float64); ok {
+				inputTokens = int(pt)
+			}
+			if ct, ok := usage["candidatesTokenCount"].(float64); ok {
+				outputTokens = int(ct)
+			}
+		}
 	}
 
-	// Final chunk: send finish_reason
-	doneChunk := map[string]interface{}{
-		"id":      id,
+	latencyMs := int(time.Since(start).Milliseconds())
+	log.Printf("[CHAT] Stream completed: %d chunks, %d input tokens, %d output tokens, latency: %dms", chunkCount, inputTokens, outputTokens, latencyMs)
+
+	// Send the final stop chunk with usage info
+	finishReason := "stop"
+	finalChunk := map[string]interface{}{
+		"id":      responseID,
 		"object":  "chat.completion.chunk",
 		"created": created,
-		"model":   model,
+		"model":   req.Model,
 		"choices": []map[string]interface{}{
 			{
 				"index":         0,
 				"delta":         map[string]interface{}{},
-				"finish_reason": "stop",
+				"finish_reason": finishReason,
 			},
 		},
 		"usage": map[string]interface{}{
@@ -357,10 +391,73 @@ func (h *OpenAIHandler) writeStreamResponse(w http.ResponseWriter, id, model str
 			"total_tokens":      inputTokens + outputTokens,
 		},
 	}
-	data, _ = json.Marshal(doneChunk)
+	data, _ := json.Marshal(finalChunk)
 	fmt.Fprintf(w, "data: %s\n\n", data)
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
+
+	// Log the request after streaming completes
+	h.geminiService.LogRequest(client.ID, resolvedModel, resp.StatusCode, inputTokens, outputTokens, latencyMs, "")
+}
+
+// sendSSEChunk writes a single OpenAI-format SSE chunk to the client.
+func sendSSEChunk(w http.ResponseWriter, flusher http.Flusher, id, model string, created int64, delta map[string]interface{}, finishReason interface{}) {
+	chunk := map[string]interface{}{
+		"id":      id,
+		"object":  "chat.completion.chunk",
+		"created": created,
+		"model":   model,
+		"choices": []map[string]interface{}{
+			{
+				"index":         0,
+				"delta":         delta,
+				"finish_reason": finishReason,
+			},
+		},
+	}
+	data, _ := json.Marshal(chunk)
+	fmt.Fprintf(w, "data: %s\n\n", data)
+	flusher.Flush()
+}
+
+// extractGeminiTextFromChunk extracts text from a single Gemini streaming chunk.
+func extractGeminiTextFromChunk(chunk map[string]interface{}) string {
+	candidates, ok := chunk["candidates"].([]interface{})
+	if !ok || len(candidates) == 0 {
+		return ""
+	}
+	candidate, ok := candidates[0].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	content, ok := candidate["content"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	parts, ok := content["parts"].([]interface{})
+	if !ok || len(parts) == 0 {
+		return ""
+	}
+	part, ok := parts[0].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	text, _ := part["text"].(string)
+	return text
+}
+
+// extractGeminiErrorMessage extracts the error message from a Gemini error response body.
+func extractGeminiErrorMessage(body []byte) string {
+	var geminiErr map[string]interface{}
+	if err := json.Unmarshal(body, &geminiErr); err != nil {
+		return "Gemini API error"
+	}
+	if errObj, ok := geminiErr["error"].(map[string]interface{}); ok {
+		if msg, ok := errObj["message"].(string); ok {
+			return msg
+		}
+	}
+	return "Gemini API error"
 }
 
 // extractGeminiText pulls the generated text from a Gemini API response body.

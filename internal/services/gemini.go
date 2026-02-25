@@ -77,12 +77,18 @@ type UsageMetadata struct {
 	TotalTokenCount      int `json:"totalTokenCount"`
 }
 
-func (s *GeminiService) ForwardRequest(model string, body []byte) ([]byte, int, error) {
+// resolveModel applies the allowed model check and falls back to the default if needed.
+func (s *GeminiService) resolveModel(model string) string {
 	if !s.isModelAllowed(model) {
 		if s.cfg.Gemini.DefaultModel != "" {
 			model = s.cfg.Gemini.DefaultModel
 		}
 	}
+	return model
+}
+
+func (s *GeminiService) ForwardRequest(model string, body []byte) ([]byte, int, error) {
+	model = s.resolveModel(model)
 
 	log.Printf("[GEMINI] ForwardRequest model=%s, default=%s, allowed=%v", model, s.cfg.Gemini.DefaultModel, s.cfg.Gemini.AllowedModels)
 
@@ -112,6 +118,37 @@ func (s *GeminiService) ForwardRequest(model string, body []byte) ([]byte, int, 
 	}
 
 	return respBody, resp.StatusCode, nil
+}
+
+// ForwardStreamRequest calls Gemini's streamGenerateContent endpoint and returns
+// the raw HTTP response. The caller is responsible for closing the response body.
+// Gemini streams back a JSON array: [{chunk}, {chunk}, ...] where each chunk
+// has the same structure as a generateContent response with partial text.
+func (s *GeminiService) ForwardStreamRequest(model string, body []byte) (*http.Response, string, error) {
+	model = s.resolveModel(model)
+
+	log.Printf("[GEMINI] ForwardStreamRequest model=%s, default=%s, allowed=%v", model, s.cfg.Gemini.DefaultModel, s.cfg.Gemini.AllowedModels)
+
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:streamGenerateContent?alt=sse&key=%s", model, s.cfg.Gemini.APIKey)
+	log.Printf("[GEMINI] Stream URL: %s", url)
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, model, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{
+		Timeout: time.Duration(s.cfg.Gemini.TimeoutSeconds) * time.Second,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, model, fmt.Errorf("failed to send request: %w", err)
+	}
+
+	return resp, model, nil
 }
 
 func (s *GeminiService) LogRequest(clientID, model string, statusCode int, inputTokens, outputTokens int, latencyMs int, errMsg string) error {
