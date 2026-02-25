@@ -13,7 +13,9 @@ type Client struct {
 	// Backend is the provider name from config (e.g. "gemini", "openai", "anthropic", "mistral", "ollama", "lmstudio")
 	Backend string `gorm:"type:varchar(50);default:'gemini'" json:"backend"`
 	// BackendBaseURL allows per-client URL override for local backends (Ollama, LM Studio)
-	BackendBaseURL       string    `gorm:"type:varchar(500)" json:"backend_base_url,omitempty"`
+	BackendBaseURL string `gorm:"type:varchar(500)" json:"backend_base_url,omitempty"`
+	// SystemPrompt is an optional system prompt prepended to every request from this client
+	SystemPrompt         string    `gorm:"type:text" json:"system_prompt,omitempty"`
 	RateLimitMinute      int       `gorm:"default:60" json:"rate_limit_minute"`
 	RateLimitHour        int       `gorm:"default:1000" json:"rate_limit_hour"`
 	RateLimitDay         int       `gorm:"default:10000" json:"rate_limit_day"`

@@ -15,6 +15,7 @@ import (
 	"ai-gateway/internal/handlers"
 	"ai-gateway/internal/middleware"
 	"ai-gateway/internal/models"
+	"ai-gateway/internal/providers"
 	"ai-gateway/internal/services"
 	"ai-gateway/internal/templates"
 
@@ -62,6 +63,9 @@ func main() {
 	geminiService := services.NewGeminiService(db, cfg)
 	statsService := services.NewStatsService(db)
 
+	// Build the multi-backend provider registry from config
+	providerRegistry := providers.BuildRegistry(cfg)
+
 	// Set up the real-time dashboard WebSocket hub
 	dashboardHub := services.NewDashboardHub(statsService)
 	geminiService.SetOnRequestLogged(dashboardHub.NotifyUpdate)
@@ -74,7 +78,7 @@ func main() {
 	router.Use(middleware.MaxRequestSize(10 << 20))
 
 	proxyHandler := handlers.NewProxyHandler(geminiService)
-	openaiHandler := handlers.NewOpenAIHandler(geminiService)
+	openaiHandler := handlers.NewOpenAIHandler(geminiService, providerRegistry)
 
 	rateLimiter := middleware.NewRateLimiter()
 	authMiddleware := middleware.NewAuthMiddleware(clientService)
