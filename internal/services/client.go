@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"gemini-proxy/internal/config"
@@ -53,16 +54,19 @@ func (s *ClientService) CreateClient(name, description, keyType string, cfg *con
 
 func (s *ClientService) GetClientByAPIKey(apiKey string) (*models.Client, error) {
 	apiKeyHash := hashAPIKey(apiKey)
+	log.Printf("[CLIENT] Looking up API key: %s... (hash: %x)", apiKey[:min(8, len(apiKey))], apiKeyHash[:8])
 
 	var client models.Client
 	err := s.db.Where("api_key_hash = ? AND is_active = ?", apiKeyHash, true).First(&client).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("[CLIENT] No client found for key: %s...", apiKey[:min(8, len(apiKey))])
 			return nil, nil
 		}
 		return nil, err
 	}
 
+	log.Printf("[CLIENT] Found client: %s (%s)", client.Name, client.ID)
 	return &client, nil
 }
 

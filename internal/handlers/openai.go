@@ -28,6 +28,7 @@ func (h *OpenAIHandler) RegisterRoutes(r chi.Router) {
 		r.Post("/v1/chat/completions", h.ChatCompletions)
 		r.Post("/v1/messages", h.ChatCompletions)
 		r.Post("/v1/messages/count_tokens", h.CountTokens)
+		r.Post("/chat/completions", h.ChatCompletions)
 		r.Get("/v1/models", h.ListModels)
 		r.Get("/v1/models/{model}", h.GetModel)
 	})
