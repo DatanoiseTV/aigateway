@@ -72,7 +72,10 @@ type LoggingConfig struct {
 	File  string `yaml:"file"`
 }
 
+var configPath string
+
 func Load(path string) (*Config, error) {
+	configPath = path
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -238,4 +241,11 @@ func generateRandomString(length int) string {
 	b := make([]byte, length)
 	rand.Read(b)
 	return hex.EncodeToString(b)[:length]
+}
+
+func Save(cfg *Config) {
+	if configPath == "" {
+		return
+	}
+	saveConfig(cfg, configPath)
 }

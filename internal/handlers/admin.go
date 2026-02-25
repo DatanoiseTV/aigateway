@@ -20,6 +20,7 @@ type AdminHandler struct {
 	cfg           *config.Config
 	clientService *services.ClientService
 	statsService  *services.StatsService
+	geminiService *services.GeminiService
 	templates     *template.Template
 }
 
@@ -30,7 +31,7 @@ type PageData struct {
 	CSRFToken string
 }
 
-func NewAdminHandler(cfg *config.Config, clientService *services.ClientService, statsService *services.StatsService) (*AdminHandler, error) {
+func NewAdminHandler(cfg *config.Config, clientService *services.ClientService, statsService *services.StatsService, geminiService *services.GeminiService) (*AdminHandler, error) {
 	tmpl := template.New("admin").Funcs(template.FuncMap{
 		"formatDate":     formatDate,
 		"formatInt":      formatInt,
@@ -49,6 +50,7 @@ func NewAdminHandler(cfg *config.Config, clientService *services.ClientService, 
 		cfg:           cfg,
 		clientService: clientService,
 		statsService:  statsService,
+		geminiService: geminiService,
 		templates:     tmpl,
 	}, nil
 }
@@ -76,6 +78,9 @@ func (h *AdminHandler) RegisterRoutes(r *chi.Mux) {
 		r.Get("/admin/settings", h.ShowSettings)
 		r.Post("/admin/settings", h.UpdateSettings)
 		r.Get("/admin/stats/api", h.GetAPISTats)
+		r.Get("/admin/api/test-connection", h.TestConnection)
+		r.Get("/admin/api/models", h.GetModels)
+		r.Get("/admin/api/fetch-models", h.FetchModels)
 	})
 }
 
@@ -338,6 +343,13 @@ func (h *AdminHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	h.cfg.Gemini.APIKey = r.Form.Get("gemini_api_key")
 	h.cfg.Gemini.DefaultModel = r.Form.Get("default_model")
 
+	allowedModels := r.Form["allowed_models"]
+	if len(allowedModels) > 0 {
+		h.cfg.Gemini.AllowedModels = allowedModels
+	}
+
+	config.Save(h.cfg)
+
 	http.Redirect(w, r, "/admin/settings?success=true", http.StatusFound)
 }
 
@@ -351,6 +363,48 @@ func (h *AdminHandler) GetAPISTats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"total_requests":%d,"total_input_tokens":%d,"total_output_tokens":%d,"active_clients":%d,"error_rate":%.2f}`,
 		stats.TotalRequestsToday, stats.TotalInputTokensToday, stats.TotalOutputTokensToday, stats.ActiveClients, stats.ErrorRate)
+}
+
+func (h *AdminHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
+	msg, ok, err := h.geminiService.TestConnection()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"success":false,"message":"%s"}`, msg)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"success":%v,"message":"%s"}`, ok, msg)
+}
+
+func (h *AdminHandler) GetModels(w http.ResponseWriter, r *http.Request) {
+	models := h.cfg.Gemini.AllowedModels
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"models":[%s]}`, formatStringArray(models))
+}
+
+func (h *AdminHandler) FetchModels(w http.ResponseWriter, r *http.Request) {
+	models, err := h.geminiService.FetchAvailableModels()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"success":false,"error":"%s"}`, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"success":true,"models":[%s]}`, formatStringArray(models))
+}
+
+func formatStringArray(arr []string) string {
+	result := ""
+	for i, s := range arr {
+		if i > 0 {
+			result += ","
+		}
+		result += fmt.Sprintf(`"%s"`, s)
+	}
+	return result
 }
 
 func (h *AdminHandler) render(w http.ResponseWriter, name string, data PageData) {
@@ -411,7 +465,12 @@ var adminTemplates = []byte(`
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; }
+        .hidden { display: none; }
     </style>
+    <script>
+        function showModal(id) { document.getElementById(id).classList.remove('hidden'); }
+        function hideModal(id) { document.getElementById(id).classList.add('hidden'); }
+    </script>
 </head>
 <body class="bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 min-h-screen flex items-center justify-center">
     <div class="w-full max-w-md">
@@ -724,7 +783,7 @@ var adminTemplates = []byte(`
                 <h1 class="text-3xl font-bold text-white">Clients</h1>
                 <p class="text-gray-400 mt-1">Manage API clients and their quotas</p>
             </div>
-            <button onclick="document.getElementById('createModal').classList.remove('hidden')" 
+            <button onclick="showModal('createModal')" 
                 class="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-5 py-2.5 rounded-xl font-medium hover:from-blue-700 hover:to-blue-800 transition-all flex items-center space-x-2">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
@@ -810,7 +869,7 @@ var adminTemplates = []byte(`
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
                                 </svg>
                                 <p class="text-gray-500">No clients yet</p>
-                                <button onclick="document.getElementById('createModal').classList.remove('hidden')" class="mt-2 text-blue-400 hover:text-blue-300 font-medium">Create your first client</button>
+                                <button onclick="showModal('createModal')" class="mt-2 text-blue-400 hover:text-blue-300 font-medium">Create your first client</button>
                             </div>
                         </td>
                     </tr>
@@ -825,7 +884,7 @@ var adminTemplates = []byte(`
         <div class="bg-gray-800 border border-gray-700 rounded-2xl w-full max-w-md p-6">
             <div class="flex justify-between items-center mb-6">
                 <h2 class="text-xl font-bold text-white">Create New Client</h2>
-                <button onclick="document.getElementById('createModal').classList.add('hidden')" class="text-gray-400 hover:text-white">
+                <button onclick="hideModal('createModal')" class="text-gray-400 hover:text-white">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                     </svg>
@@ -841,7 +900,7 @@ var adminTemplates = []byte(`
                     <textarea name="description" placeholder="Optional description" rows="2" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
                 </div>
                 <div class="flex space-x-3">
-                    <button type="button" onclick="document.getElementById('createModal').classList.add('hidden')" class="flex-1 px-4 py-3 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition-colors">Cancel</button>
+                    <button type="button" onclick="hideModal('createModal')" class="flex-1 px-4 py-3 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition-colors">Cancel</button>
                     <button type="submit" class="flex-1 px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors">Create Client</button>
                 </div>
             </form>
@@ -1151,7 +1210,63 @@ var adminTemplates = []byte(`
     <title>Settings - Gemini Proxy</title>
     <link rel="stylesheet" href="/static/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>body { font-family: 'Inter', sans-serif; }</style>
+    <style>body { font-family: 'Inter', sans-serif; } .hidden { display: none; }</style>
+    <script>
+        async function testConnection() {
+            const btn = document.getElementById('testBtn');
+            const result = document.getElementById('testResult');
+            btn.disabled = true;
+            btn.textContent = 'Testing...';
+            try {
+                const res = await fetch('/admin/api/test-connection');
+                const data = await res.json();
+                result.textContent = data.message;
+                result.className = data.success ? 'text-green-400 mt-2' : 'text-red-400 mt-2';
+                result.classList.remove('hidden');
+            } catch (e) {
+                result.textContent = 'Error: ' + e.message;
+                result.className = 'text-red-400 mt-2';
+                result.classList.remove('hidden');
+            }
+            btn.disabled = false;
+            btn.textContent = 'Test Connection';
+        }
+        
+        async function fetchModels() {
+            const btn = document.getElementById('fetchBtn');
+            const list = document.getElementById('modelList');
+            btn.disabled = true;
+            btn.textContent = 'Fetching...';
+            try {
+                const res = await fetch('/admin/api/fetch-models');
+                const data = await res.json();
+                if (data.success) {
+                    list.innerHTML = '';
+                    data.models.forEach(m => {
+                        const label = document.createElement('label');
+                        label.className = 'flex items-center space-x-2 text-gray-300 text-sm';
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.name = 'allowed_models';
+                        checkbox.value = m;
+                        checkbox.className = 'rounded bg-gray-900 border-gray-600 text-blue-600';
+                        const span = document.createElement('span');
+                        span.textContent = m;
+                        label.appendChild(checkbox);
+                        label.appendChild(span);
+                        list.appendChild(label);
+                    });
+                    document.getElementById('modelSection').classList.remove('hidden');
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+            btn.disabled = false;
+            btn.textContent = 'Fetch Available Models';
+        }
+    </script>
 </head>
 <body class="bg-gray-900 min-h-screen">
     <nav class="bg-gray-800/80 backdrop-blur-md border-b border-gray-700 sticky top-0 z-50">
@@ -1205,9 +1320,39 @@ var adminTemplates = []byte(`
                         <label class="block text-gray-300 text-sm font-medium mb-2">Default Model</label>
                         <input type="text" name="default_model" value="{{(index .Data "Config").Gemini.DefaultModel}}" placeholder="gemini-flash-lite-latest"
                             class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <p class="text-gray-500 text-xs mt-1">Available: gemini-2.0-flash, gemini-2.0-flash-lite, gemini-2.0-pro, gemini-flash-lite-latest</p>
+                    </div>
+                    
+                    <div class="flex items-center space-x-4 pt-4">
+                        <button type="button" id="testBtn" onclick="testConnection()" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium">
+                            Test Connection
+                        </button>
+                        <button type="button" id="fetchBtn" onclick="fetchModels()" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium">
+                            Fetch Available Models
+                        </button>
+                    </div>
+                    <div id="testResult" class="hidden"></div>
+                </div>
+            </div>
+
+            <!-- Allowed Models -->
+            <div class="bg-gray-800 rounded-2xl border border-gray-700 p-6 mb-6">
+                <h3 class="text-lg font-semibold text-white mb-4 flex items-center">
+                    <svg class="w-5 h-5 text-blue-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    Allowed Models
+                </h3>
+                <div id="modelSection" class="{{if (index .Data "Config").Gemini.AllowedModels}}{{else}}hidden{{end}} mb-4">
+                    <div id="modelList" class="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
+                        {{range (index .Data "Config").Gemini.AllowedModels}}
+                        <label class="flex items-center space-x-2 text-gray-300 text-sm">
+                            <input type="checkbox" name="allowed_models" value="{{.}}" checked class="rounded bg-gray-900 border-gray-600 text-blue-600">
+                            <span>{{.}}</span>
+                        </label>
+                        {{end}}
                     </div>
                 </div>
+                <p class="text-gray-500 text-xs">Click "Fetch Available Models" to get the list from Google's API</p>
             </div>
 
             <!-- Server Info -->

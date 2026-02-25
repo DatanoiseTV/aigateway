@@ -80,7 +80,7 @@ func main() {
 		proxyHandler.RegisterRoutes(r)
 	})
 
-	adminHandler, err := handlers.NewAdminHandler(cfg, clientService, statsService)
+	adminHandler, err := handlers.NewAdminHandler(cfg, clientService, statsService, geminiService)
 	if err != nil {
 		log.Fatalf("Failed to initialize admin handler: %v", err)
 	}

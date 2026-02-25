@@ -185,3 +185,63 @@ func ParseGeminiResponse(body []byte) (int, int, error) {
 func (s *GeminiService) GetBaseURL() string {
 	return "https://generativelanguage.googleapis.com/v1beta"
 }
+
+func (s *GeminiService) TestConnection() (string, bool, error) {
+	if s.cfg.Gemini.APIKey == "" {
+		return "API key not configured", false, nil
+	}
+
+	url := "https://generativelanguage.googleapis.com/v1/models?key=" + s.cfg.Gemini.APIKey
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return "Failed to connect: " + err.Error(), false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "API returned status: " + resp.Status, false, nil
+	}
+
+	return "Connected successfully", true, nil
+}
+
+func (s *GeminiService) FetchAvailableModels() ([]string, error) {
+	if s.cfg.Gemini.APIKey == "" {
+		return nil, fmt.Errorf("API key not configured")
+	}
+
+	url := "https://generativelanguage.googleapis.com/v1/models?key=" + s.cfg.Gemini.APIKey
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("API returned status: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	models := make([]string, len(result.Models))
+	for i, m := range result.Models {
+		models[i] = m.Name
+	}
+
+	return models, nil
+}
