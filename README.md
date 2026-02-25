@@ -6,6 +6,13 @@ Each client gets its own API key, backend assignment, rate limits, token quotas,
 
 ---
 
+# Screenshots
+
+<img width="2994" height="1542" alt="image" src="https://github.com/user-attachments/assets/420c007e-2443-4e3d-822f-1743daa9142f" />
+<img width="2994" height="1544" alt="image" src="https://github.com/user-attachments/assets/afa7b44a-b2f6-4d1b-b47e-96aa33ea6292" />
+<img width="2994" height="1544" alt="image" src="https://github.com/user-attachments/assets/9fecf964-67b2-4163-af83-3c747c812dec" />
+
+
 ## Supported Providers
 
 | Provider | Protocol | Default Endpoint | Auth |
