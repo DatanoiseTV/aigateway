@@ -11,12 +11,35 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Admin    AdminConfig    `yaml:"admin"`
-	Gemini   GeminiConfig   `yaml:"gemini"`
-	Defaults DefaultsConfig `yaml:"defaults"`
-	Database DatabaseConfig `yaml:"database"`
-	Logging  LoggingConfig  `yaml:"logging"`
+	Server    ServerConfig              `yaml:"server"`
+	Admin     AdminConfig               `yaml:"admin"`
+	Providers map[string]ProviderConfig `yaml:"providers"`
+	Defaults  DefaultsConfig            `yaml:"defaults"`
+	Database  DatabaseConfig            `yaml:"database"`
+	Logging   LoggingConfig             `yaml:"logging"`
+
+	// Deprecated: kept for backward compat with existing config files.
+	// On load, this is migrated into Providers["gemini"].
+	Gemini *LegacyGeminiConfig `yaml:"gemini,omitempty"`
+}
+
+// ProviderConfig is the unified configuration for any upstream AI backend.
+type ProviderConfig struct {
+	// Type identifies the backend: gemini, openai, anthropic, mistral, ollama, lmstudio
+	Type           string   `yaml:"type" json:"type"`
+	APIKey         string   `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	BaseURL        string   `yaml:"base_url,omitempty" json:"base_url,omitempty"`
+	DefaultModel   string   `yaml:"default_model,omitempty" json:"default_model,omitempty"`
+	AllowedModels  []string `yaml:"allowed_models,omitempty" json:"allowed_models,omitempty"`
+	TimeoutSeconds int      `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
+}
+
+// LegacyGeminiConfig supports the old config.yaml format with a top-level gemini: key.
+type LegacyGeminiConfig struct {
+	APIKey         string   `yaml:"api_key"`
+	DefaultModel   string   `yaml:"default_model"`
+	AllowedModels  []string `yaml:"allowed_models"`
+	TimeoutSeconds int      `yaml:"timeout_seconds"`
 }
 
 type ServerConfig struct {
@@ -35,13 +58,6 @@ type AdminConfig struct {
 	Username      string `yaml:"username"`
 	PasswordHash  string `yaml:"password_hash"`
 	SessionSecret string `yaml:"session_secret"`
-}
-
-type GeminiConfig struct {
-	APIKey         string   `yaml:"api_key"`
-	DefaultModel   string   `yaml:"default_model"`
-	AllowedModels  []string `yaml:"allowed_models"`
-	TimeoutSeconds int      `yaml:"timeout_seconds"`
 }
 
 type DefaultsConfig struct {
@@ -93,8 +109,38 @@ func Load(path string) (*Config, error) {
 		cfg.Server.Port = 8090
 	}
 
-	if cfg.Gemini.TimeoutSeconds == 0 {
-		cfg.Gemini.TimeoutSeconds = 120
+	if cfg.Providers == nil {
+		cfg.Providers = make(map[string]ProviderConfig)
+	}
+
+	// Migrate legacy gemini: section into providers map
+	if cfg.Gemini != nil {
+		if _, exists := cfg.Providers["gemini"]; !exists {
+			timeout := cfg.Gemini.TimeoutSeconds
+			if timeout == 0 {
+				timeout = 120
+			}
+			cfg.Providers["gemini"] = ProviderConfig{
+				Type:           "gemini",
+				APIKey:         cfg.Gemini.APIKey,
+				DefaultModel:   cfg.Gemini.DefaultModel,
+				AllowedModels:  cfg.Gemini.AllowedModels,
+				TimeoutSeconds: timeout,
+			}
+		}
+		cfg.Gemini = nil
+	}
+
+	// Ensure timeout defaults for all providers
+	for name, p := range cfg.Providers {
+		if p.TimeoutSeconds == 0 {
+			p.TimeoutSeconds = 120
+			cfg.Providers[name] = p
+		}
+		if p.Type == "" {
+			p.Type = name
+			cfg.Providers[name] = p
+		}
 	}
 
 	if cfg.Defaults.RateLimit.RequestsPerMinute == 0 {
@@ -107,6 +153,24 @@ func Load(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// GetProvider returns the provider config for a given name, or nil if not found.
+func (c *Config) GetProvider(name string) *ProviderConfig {
+	p, ok := c.Providers[name]
+	if !ok {
+		return nil
+	}
+	return &p
+}
+
+// ProviderNames returns a sorted list of configured provider names.
+func (c *Config) ProviderNames() []string {
+	names := make([]string, 0, len(c.Providers))
+	for name := range c.Providers {
+		names = append(names, name)
+	}
+	return names
 }
 
 func createDefaultConfig(path string) (*Config, error) {
@@ -130,10 +194,13 @@ func createDefaultConfig(path string) (*Config, error) {
 			PasswordHash:  string(hash),
 			SessionSecret: secret,
 		},
-		Gemini: GeminiConfig{
-			DefaultModel:   "gemini-flash-lite-latest",
-			AllowedModels:  []string{"gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.0-pro", "gemini-pro", "gemini-pro-vision"},
-			TimeoutSeconds: 120,
+		Providers: map[string]ProviderConfig{
+			"gemini": {
+				Type:           "gemini",
+				DefaultModel:   "gemini-flash-lite-latest",
+				AllowedModels:  []string{"gemini-2.0-flash", "gemini-2.0-flash-lite"},
+				TimeoutSeconds: 120,
+			},
 		},
 		Defaults: DefaultsConfig{
 			RateLimit: RateLimitDefaults{
@@ -193,11 +260,6 @@ func ensureDefaults(cfg Config, path string) (Config, error) {
 
 	if cfg.Admin.SessionSecret == "" {
 		cfg.Admin.SessionSecret = generateRandomString(32)
-		changed = true
-	}
-
-	if cfg.Gemini.AllowedModels == nil || len(cfg.Gemini.AllowedModels) == 0 {
-		cfg.Gemini.AllowedModels = []string{"gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.0-pro", "gemini-flash-lite-latest", "gemini-pro", "gemini-pro-vision"}
 		changed = true
 	}
 

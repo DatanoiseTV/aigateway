@@ -5,11 +5,15 @@ import (
 )
 
 type Client struct {
-	ID                   string    `gorm:"primaryKey;type:varchar(36)" json:"id"`
-	Name                 string    `gorm:"type:varchar(255);not null" json:"name"`
-	Description          string    `gorm:"type:text" json:"description"`
-	APIKeyHash           []byte    `gorm:"type:blob;uniqueIndex" json:"-"`
-	IsActive             bool      `gorm:"default:true" json:"is_active"`
+	ID          string `gorm:"primaryKey;type:varchar(36)" json:"id"`
+	Name        string `gorm:"type:varchar(255);not null" json:"name"`
+	Description string `gorm:"type:text" json:"description"`
+	APIKeyHash  []byte `gorm:"type:blob;uniqueIndex" json:"-"`
+	IsActive    bool   `gorm:"default:true" json:"is_active"`
+	// Backend is the provider name from config (e.g. "gemini", "openai", "anthropic", "mistral", "ollama", "lmstudio")
+	Backend string `gorm:"type:varchar(50);default:'gemini'" json:"backend"`
+	// BackendBaseURL allows per-client URL override for local backends (Ollama, LM Studio)
+	BackendBaseURL       string    `gorm:"type:varchar(500)" json:"backend_base_url,omitempty"`
 	RateLimitMinute      int       `gorm:"default:60" json:"rate_limit_minute"`
 	RateLimitHour        int       `gorm:"default:1000" json:"rate_limit_hour"`
 	RateLimitDay         int       `gorm:"default:10000" json:"rate_limit_day"`
