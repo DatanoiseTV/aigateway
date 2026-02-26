@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -226,6 +227,7 @@ func (p *VLLMProvider) ParseStreamChunk(data []byte) (string, int, int) {
 
 func (p *VLLMProvider) ListModels() ([]string, error) {
 	url := p.cfg.BaseURL + "/v1/models"
+	log.Printf("[vllm ListModels] GET %s", url)
 
 	httpReq, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -235,9 +237,12 @@ func (p *VLLMProvider) ListModels() ([]string, error) {
 
 	resp, err := getVLLMHTTPClient().Do(httpReq)
 	if err != nil {
+		log.Printf("[vllm ListModels] HTTP request failed: %v", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	log.Printf("[vllm ListModels] Response status: %d", resp.StatusCode)
 
 	var response struct {
 		Data []struct {
@@ -246,6 +251,7 @@ func (p *VLLMProvider) ListModels() ([]string, error) {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		log.Printf("[vllm ListModels] Failed to decode response: %v", err)
 		return nil, err
 	}
 
@@ -254,6 +260,7 @@ func (p *VLLMProvider) ListModels() ([]string, error) {
 		models = append(models, m.ID)
 	}
 
+	log.Printf("[vllm ListModels] Found %d models: %v", len(models), models)
 	return models, nil
 }
 
