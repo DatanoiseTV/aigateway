@@ -1,8 +1,14 @@
 # AI Gateway
 
-A lightweight, self-hosted API gateway that sits between your applications and LLM providers. It exposes an OpenAI-compatible API and routes requests to the configured upstream backend -- Google Gemini, OpenAI, Anthropic, Mistral, Perplexity, xAI, Cohere, Azure OpenAI, Ollama, or LM Studio.
+[![Go Version](https://img.shields.io/github/go-mod/go-version/DatanoiseTV/aigateway)](https://github.com/DatanoiseTV/aigateway)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Each client gets its own API key, backend assignment, rate limits, token quotas, and optional system prompt. Everything is managed through a built-in admin dashboard with real-time usage monitoring.
+A lightweight, self-hosted API gateway that sits between your applications and LLM providers. Each client gets their own API key with independent configuration: backend provider, upstream API key, default model, model whitelist, rate limits, and token quotas.
+
+- **OpenAI-compatible** - Works with any OpenAI SDK or tool
+- **Per-client config** - Each API key routes to different providers
+- **Real-time dashboard** - Live stats via WebSocket
+- **Local models** - Built-in support for Ollama and LM Studio
 
 ---
 
@@ -38,24 +44,45 @@ All providers support streaming via Server-Sent Events. Any OpenAI-compatible en
 
 Grab a binary from the [releases page](https://github.com/DatanoiseTV/aigateway/releases) or build from source:
 
-```
+```bash
 go build -o ai-gateway ./cmd/server
 ```
 
 ### Run
 
-```
+```bash
 ./ai-gateway
 ```
 
 On first launch the server creates a `config.yaml`, generates admin credentials (printed once to stdout), and initializes the database. Default port is `8090`.
 
-### Configure
+### Quick Setup
 
-Open `http://localhost:8090/admin`, log in, and:
+1. Open `http://localhost:8090/admin`, log in with credentials from stdout
+2. Go to **Clients** → **New Client**
+3. Configure:
+   - **Backend**: Provider (gemini, openai, anthropic, ollama, lmstudio, etc.)
+   - **Backend API Key**: Your API key for that provider
+   - **Default Model**: Model name to use by default
+   - **Base URL**: Override (e.g., `http://localhost:11434` for local Ollama)
+4. Use the client's API key with your OpenAI-compatible app
 
-1. Go to **Clients** -- create API keys for your applications, each with their own backend provider, API key, and model settings
-2. Point your OpenAI SDK at `http://localhost:8090/v1` with the client key
+### Example: Using with Ollama
+
+```bash
+# Create client with:
+#   Backend: ollama
+#   Base URL: http://localhost:11434
+#   Default Model: llama3.2
+
+curl http://localhost:8090/v1/chat/completions \
+  -H "Authorization: Bearer <CLIENT_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama3.2",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
 
 ---
 
@@ -173,12 +200,14 @@ defaults:
     max_input_tokens_per_day: 1000000
     max_output_tokens_per_day: 500000
     max_requests_per_day: 1000
+    max_input_tokens: 1000000
+    max_output_tokens: 8192
 
 database:
   path: ./data/gateway.db
 ```
 
-All provider configuration (API keys, endpoints, models) is done per-client in the admin UI. Each client can have its own backend provider, API key, base URL, and model settings.
+All provider configuration (API keys, endpoints, models) is done per-client in the admin UI. Each client can have its own backend provider, upstream API key, base URL, and model settings.
 
 ### CLI Flags
 
@@ -228,26 +257,21 @@ Not yet available. Contributions welcome.
 ```
                         +------------------+
                         |   Admin Web UI   |
-                        |  (WebSocket live |
-                        |    dashboard)    |
+                        |  (WebSocket live|
+                        |    dashboard)   |
                         +--------+---------+
                                  |
 Clients -----> AI Gateway (:8090)
   |              |
-  | OpenAI API   +---> Provider Registry
-  | (any SDK)    |       |-- gemini     --> Google Gemini API
-  |              |       |-- openai     --> OpenAI
-  | Gemini API   |       |-- anthropic  --> Anthropic
-  | (native)     |       |-- mistral    --> Mistral
-                 |       |-- perplexity --> Perplexity AI
-                 |       |-- xai        --> xAI / Grok
-                 |       |-- cohere     --> Cohere
-                 |       |-- azure      --> Azure OpenAI
-                 |       |-- ollama     --> Ollama (local)
-                 |       +-- lmstudio   --> LM Studio (local)
-                 |
-                 +---> SQLite (clients, usage, logs)
+  | OpenAI API   +---> Per-Client Provider
+  | (any SDK)    |      (configured in admin UI)
+  |              |
+  | Gemini API   +---> SQLite (clients, usage, logs)
+  | (native)    |
+  +---> Any LLM provider
 ```
+
+Each client request is routed to its configured backend provider based on the API key used.
 
 ---
 
@@ -275,11 +299,11 @@ internal/
 ## Security
 
 - Client API keys are stored as SHA-256 hashes
+- Upstream provider API keys are stored per-client (encrypted at rest)
 - Admin sessions use signed, HTTP-only cookies
 - Security headers on every response (HSTS, X-Frame-Options, X-Content-Type-Options)
 - Per-client rate limiting and quota enforcement
 - Request body size capped at 10 MB
-- Provider API keys stored in `config.yaml` with `0600` file permissions
 - System prompt injection allows enforcing guardrails per client
 
 ---
