@@ -13,6 +13,7 @@ import (
 
 	"ai-gateway/internal/config"
 	"ai-gateway/internal/handlers"
+	"ai-gateway/internal/logger"
 	"ai-gateway/internal/middleware"
 	"ai-gateway/internal/models"
 	"ai-gateway/internal/providers"
@@ -22,7 +23,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 var (
@@ -37,6 +38,12 @@ func main() {
 	flag.Parse()
 
 	printBanner()
+
+	if err := logger.Init(false); err != nil {
+		log.Printf("Failed to init logger, using silent: %v", err)
+		logger.InitSilent()
+	}
+	defer logger.Sync()
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -73,7 +80,6 @@ func main() {
 
 	router := chi.NewRouter()
 
-	router.Use(middleware.RequestLogger)
 	router.Use(middleware.Recovery)
 	router.Use(middleware.SecurityHeaders)
 	router.Use(middleware.MaxRequestSize(10 << 20))
@@ -143,7 +149,7 @@ func main() {
 
 func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 	db, err := gorm.Open(sqlite.Open(cfg.Database.Path), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
+		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
 	})
 	if err != nil {
 		return nil, err
