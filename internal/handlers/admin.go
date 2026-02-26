@@ -1520,9 +1520,12 @@ var adminTemplates = []byte(`
                         // Check if this update is for our client
                         if (msg.client_stats && msg.client_stats[clientID]) {
                             var s = msg.client_stats[clientID];
-                            document.getElementById('client-requests').textContent = s.requests_today;
-                            document.getElementById('client-input').textContent = s.input_tokens.toLocaleString();
-                            document.getElementById('client-output').textContent = s.output_tokens.toLocaleString();
+                            var reqEl = document.getElementById('client-requests');
+                            var inEl = document.getElementById('client-input');
+                            var outEl = document.getElementById('client-output');
+                            if (reqEl) reqEl.textContent = s.requests_today;
+                            if (inEl) inEl.textContent = s.input_tokens.toLocaleString();
+                            if (outEl) outEl.textContent = s.output_tokens.toLocaleString();
                         }
                     }
                 } catch (e) {
