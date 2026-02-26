@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"golang.org/x/net/http2"
 )
 
 var (
@@ -25,13 +26,17 @@ var (
 
 func getVLLMHTTPClient() *http.Client {
 	vllmOnce.Do(func() {
+		transport := &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 100,
+			IdleConnTimeout:     90 * time.Second,
+		}
+		if err := http2.ConfigureTransport(transport); err != nil {
+			log.Printf("[vllm] Failed to configure HTTP/2: %v", err)
+		}
 		vllmHTTPClient = &http.Client{
-			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 100,
-				IdleConnTimeout:     90 * time.Second,
-			},
-			Timeout: 300 * time.Second,
+			Transport: transport,
+			Timeout:   300 * time.Second,
 		}
 	})
 	return vllmHTTPClient
