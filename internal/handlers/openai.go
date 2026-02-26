@@ -357,7 +357,7 @@ func (h *OpenAIHandler) buildChatRequest(req OpenAIChatRequest, provider provide
 		MaxTokens:      req.MaxTokens,
 		Temperature:    req.Temperature,
 		Stream:         req.Stream,
-		Tools:          convertTools(req.Tools),
+		Tools:          h.mergeTools(req.Tools, client.ServerTools),
 		ResponseFormat: req.ResponseFormat,
 		StreamOptions: func() *providers.StreamOptions {
 			if req.StreamOptions != nil {
@@ -384,6 +384,32 @@ func convertTools(tools []map[string]interface{}) []providers.Tool {
 		}
 	}
 	return result
+}
+
+func (h *OpenAIHandler) mergeTools(clientTools []map[string]interface{}, serverToolsEnabled bool) []providers.Tool {
+	var tools []providers.Tool
+
+	// Add client-provided tools first
+	if len(clientTools) > 0 {
+		tools = convertTools(clientTools)
+	}
+
+	// Add server tools if enabled
+	if serverToolsEnabled && h.toolService != nil {
+		serverToolDefs := h.toolService.GetOpenAITools()
+		for _, st := range serverToolDefs {
+			tools = append(tools, providers.Tool{
+				Type: "function",
+				Function: &providers.ToolFunction{
+					Name:        getString(st["function"].(map[string]interface{}), "name"),
+					Description: getString(st["function"].(map[string]interface{}), "description"),
+					Parameters:  st["function"].(map[string]interface{})["parameters"],
+				},
+			})
+		}
+	}
+
+	return tools
 }
 
 func getString(m map[string]interface{}, key string) string {
@@ -734,7 +760,22 @@ toolLoop:
 			// Parse the chunk
 			var chunk map[string]interface{}
 			if err := json.Unmarshal([]byte(jsonData), &chunk); err != nil {
+				log.Printf("[CHAT] %s failed to parse chunk: %v", provider.Name(), err)
 				continue
+			}
+
+			// Check for error in chunk
+			if errMsg, ok := chunk["error"].(map[string]interface{}); ok {
+				errStr, _ := errMsg["message"].(string)
+				if errStr == "" {
+					errStr, _ = errMsg["type"].(string)
+				}
+				log.Printf("[CHAT] %s stream error: %s", provider.Name(), errStr)
+				writeOpenAIError(w, http.StatusBadGateway, errStr, "api_error")
+				if h.statsService != nil {
+					h.statsService.DecrementRequestsInProgress()
+				}
+				return
 			}
 
 			// Get finish_reason
@@ -745,39 +786,19 @@ toolLoop:
 				}
 			}
 
-			// Check for tool call in delta
-			if choices, ok := chunk["choices"].([]interface{}); ok && len(choices) > 0 {
-				if choice, ok := choices[0].(map[string]interface{}); ok {
-					if delta, ok := choice["delta"].(map[string]interface{}); ok {
-						// Check for tool_calls in delta
-						if toolCalls, ok := delta["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
-							if tc, ok := toolCalls[0].(map[string]interface{}); ok {
-								hasToolCall = true
-								inToolCall = true
-
-								// Extract ID (only in first chunk)
-								if id, ok := tc["id"].(string); ok && id != "" {
-									toolCallID = id
-								}
-
-								// Extract function name (may be partial)
-								if fn, ok := tc["function"].(map[string]interface{}); ok {
-									if name, ok := fn["name"].(string); ok && name != "" {
-										toolCallName = name
-									}
-									if args, ok := fn["arguments"].(string); ok && args != "" {
-										toolCallArgs += args
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-
 			// Log finish reason for debugging
 			if finishReason != "" && finishReason != "null" && finishReason != "stop" {
 				log.Printf("[CHAT] %s chunk finish_reason: %s, toolCallName: %s, toolCallArgs: %s", provider.Name(), finishReason, toolCallName, toolCallArgs)
+				// Handle error finish reasons
+				if finishReason == "length" {
+					errMsg := "Context length exceeded - the input is too long for the model's context window. Try starting a new conversation or reducing the context."
+					log.Printf("[CHAT] %s context length exceeded", provider.Name())
+					writeOpenAIError(w, http.StatusBadRequest, errMsg, "context_length_exceeded")
+					if h.statsService != nil {
+						h.statsService.DecrementRequestsInProgress()
+					}
+					return
+				}
 			}
 
 			// If finish_reason is tool_calls, execute the tool
@@ -1134,6 +1155,16 @@ toolLoop:
 			// Log finish reason for debugging
 			if finishReason != "" && finishReason != "null" && finishReason != "stop" {
 				log.Printf("[CHAT] %s chunk finish_reason: %s, toolCallName: %s, toolCallArgs: %s", provider.Name(), finishReason, toolCallName, toolCallArgs)
+				// Handle error finish reasons
+				if finishReason == "length" {
+					errMsg := "Context length exceeded - the input is too long for the model's context window. Try starting a new conversation or reducing the context."
+					log.Printf("[CHAT] %s context length exceeded", provider.Name())
+					writeOpenAIError(w, http.StatusBadRequest, errMsg, "context_length_exceeded")
+					if h.statsService != nil {
+						h.statsService.DecrementRequestsInProgress()
+					}
+					return fmt.Errorf("context length exceeded")
+				}
 			}
 
 			// If finish_reason is tool_calls, execute the tool

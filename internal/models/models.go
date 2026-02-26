@@ -29,15 +29,17 @@ type Client struct {
 	// ToolMode determines how tool calls are handled:
 	// - "pass-through" (default): gateway forwards tool_calls to client, client executes
 	// - "gateway": gateway attempts to execute tools internally
-	ToolMode             string `gorm:"type:varchar(20);default:'pass-through'" json:"tool_mode"`
-	RateLimitMinute      int    `gorm:"default:60" json:"rate_limit_minute"`
-	RateLimitHour        int    `gorm:"default:1000" json:"rate_limit_hour"`
-	RateLimitDay         int    `gorm:"default:10000" json:"rate_limit_day"`
-	QuotaInputTokensDay  int    `gorm:"default:1000000" json:"quota_input_tokens_day"`
-	QuotaOutputTokensDay int    `gorm:"default:500000" json:"quota_output_tokens_day"`
-	QuotaRequestsDay     int    `gorm:"default:1000" json:"quota_requests_day"`
-	MaxInputTokens       int    `gorm:"default:1000000" json:"max_input_tokens"`
-	MaxOutputTokens      int    `gorm:"default:8192" json:"max_output_tokens"`
+	ToolMode string `gorm:"type:varchar(20);default:'pass-through'" json:"tool_mode"`
+	// ServerTools enables server-provided tools in addition to client-provided ones
+	ServerTools          bool `gorm:"default:false" json:"server_tools"`
+	RateLimitMinute      int  `gorm:"default:60" json:"rate_limit_minute"`
+	RateLimitHour        int  `gorm:"default:1000" json:"rate_limit_hour"`
+	RateLimitDay         int  `gorm:"default:10000" json:"rate_limit_day"`
+	QuotaInputTokensDay  int  `gorm:"default:1000000" json:"quota_input_tokens_day"`
+	QuotaOutputTokensDay int  `gorm:"default:500000" json:"quota_output_tokens_day"`
+	QuotaRequestsDay     int  `gorm:"default:1000" json:"quota_requests_day"`
+	MaxInputTokens       int  `gorm:"default:1000000" json:"max_input_tokens"`
+	MaxOutputTokens      int  `gorm:"default:8192" json:"max_output_tokens"`
 	// LastSeen tracks the last time this client made a request (used for "active" status)
 	LastSeen  time.Time `json:"last_seen"`
 	CreatedAt time.Time `json:"created_at"`

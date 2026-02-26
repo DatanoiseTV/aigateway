@@ -3,6 +3,10 @@
 ## 2026-02-26
 
 ### Completed
+- [x] Add vLLM provider for RunPod serverless endpoints (1330737)
+- [x] Fix WebSocket JavaScript error in client detail page - add null checks for DOM elements (1330737)
+
+### Next Steps
 - [x] Add HTTP connection pooling for better performance
 - [x] Add debug logging for WebSocket dashboard updates
 - [x] Fix tool_call_id handling in message parsing for tool results
@@ -49,6 +53,8 @@
 - [x] Makefile for local build and cross-compilation
 - [x] config.example.yaml for safe distribution
 - [x] Add automatic fallback management for models (fallback models on rate limit, quota, server errors)
+- [x] Add vLLM provider for RunPod serverless endpoints (1330737)
+- [x] Fix WebSocket JavaScript error in client detail page - add null checks for DOM elements (1330737)
 
 ### Next Steps
 - Test streaming with all provider backends

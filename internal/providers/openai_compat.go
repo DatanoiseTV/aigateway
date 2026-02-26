@@ -59,6 +59,13 @@ func NewMistralProvider(cfg config.ProviderConfig) *OpenAICompatProvider {
 	return &OpenAICompatProvider{name: "mistral", cfg: cfg}
 }
 
+func NewOpenRouterProvider(cfg config.ProviderConfig) *OpenAICompatProvider {
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = "https://openrouter.ai/api/v1"
+	}
+	return &OpenAICompatProvider{name: "openrouter", cfg: cfg}
+}
+
 func NewOllamaProvider(name string, cfg config.ProviderConfig) *OpenAICompatProvider {
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = "http://localhost:11434"
@@ -207,6 +214,11 @@ func (p *OpenAICompatProvider) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	if p.cfg.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+	}
+	// OpenRouter requires HTTP-Referer header
+	if p.name == "openrouter" {
+		req.Header.Set("HTTP-Referer", "https://github.com/DatanoiseTV/aigateway")
+		req.Header.Set("X-Title", "AI Gateway")
 	}
 }
 

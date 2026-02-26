@@ -11,13 +11,14 @@ import (
 )
 
 type Config struct {
-	Server     ServerConfig              `yaml:"server"`
-	Admin      AdminConfig               `yaml:"admin"`
-	Providers  map[string]ProviderConfig `yaml:"providers"`
-	Defaults   DefaultsConfig            `yaml:"defaults"`
-	Database   DatabaseConfig            `yaml:"database"`
-	Logging    LoggingConfig             `yaml:"logging"`
-	Prometheus PrometheusConfig          `yaml:"prometheus"`
+	Server      ServerConfig              `yaml:"server"`
+	Admin       AdminConfig               `yaml:"admin"`
+	Providers   map[string]ProviderConfig `yaml:"providers"`
+	Defaults    DefaultsConfig            `yaml:"defaults"`
+	Database    DatabaseConfig            `yaml:"database"`
+	Logging     LoggingConfig             `yaml:"logging"`
+	Prometheus  PrometheusConfig          `yaml:"prometheus"`
+	ServerTools ServerToolsConfig         `yaml:"server_tools"`
 
 	// Deprecated: kept for backward compat with existing config files.
 	// On load, this is migrated into Providers["gemini"].
@@ -93,6 +94,11 @@ type PrometheusConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+}
+
+type ServerToolsConfig struct {
+	Enabled bool     `yaml:"enabled"`
+	Tools   []string `yaml:"tools"`
 }
 
 func (c *LoggingConfig) IsDebug() bool {
@@ -254,19 +260,10 @@ func createDefaultConfig(path string) (*Config, error) {
 func ensureDefaults(cfg Config, path string) (Config, error) {
 	changed := false
 
+	// If password hash is empty, mark for setup wizard
 	if cfg.Admin.PasswordHash == "" {
-		defaultPassword := generateRandomString(16)
-		hash, err := bcrypt.GenerateFromPassword([]byte(defaultPassword), bcrypt.DefaultCost)
-		if err != nil {
-			return cfg, fmt.Errorf("failed to hash password: %w", err)
-		}
-		cfg.Admin.PasswordHash = string(hash)
+		cfg.Admin.PasswordHash = "__SETUP_REQUIRED__"
 		changed = true
-		fmt.Printf("\n===========================================\n")
-		fmt.Printf("  Default password generated!\n")
-		fmt.Printf("  Username: admin\n")
-		fmt.Printf("  Password: %s\n", defaultPassword)
-		fmt.Printf("===========================================\n\n")
 	}
 
 	if cfg.Admin.SessionSecret == "" {
@@ -329,6 +326,11 @@ func saveConfig(cfg *Config, path string) error {
 	}
 
 	return nil
+}
+
+// SaveConfig exports saveConfig for external use
+func SaveConfig(cfg *Config, path string) error {
+	return saveConfig(cfg, path)
 }
 
 func generateRandomString(length int) string {

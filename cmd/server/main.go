@@ -30,6 +30,7 @@ var (
 	version   = "dev"
 	commit    = "unknown"
 	buildTime = "unknown"
+	setupMode = flag.Bool("setup", false, "Run setup wizard")
 )
 
 func main() {
@@ -69,7 +70,7 @@ func main() {
 	clientService := services.NewClientService(db)
 	geminiService := services.NewGeminiService(db, cfg)
 	statsService := services.NewStatsService(db)
-	toolService := services.NewToolService()
+	toolService := services.NewToolService(cfg.ServerTools.Tools)
 
 	// Build the multi-backend provider registry from config
 	providerRegistry := providers.BuildRegistry(cfg)
@@ -85,6 +86,8 @@ func main() {
 	router.Use(middleware.MaxRequestSize(10 << 20))
 
 	proxyHandler := handlers.NewProxyHandler(geminiService, statsService)
+	healthHandler := handlers.NewHealthHandler(db)
+	healthHandler.RegisterRoutes(router)
 	openaiHandler := handlers.NewOpenAIHandler(geminiService, clientService, statsService, providerRegistry, toolService)
 
 	rateLimiter := middleware.NewRateLimiter()
@@ -97,10 +100,25 @@ func main() {
 		openaiHandler.RegisterRoutes(r)
 	})
 
-	adminHandler, err := handlers.NewAdminHandler(cfg, clientService, statsService, geminiService, dashboardHub)
+	adminHandler, err := handlers.NewAdminHandler(cfg, clientService, statsService, geminiService, dashboardHub, toolService)
 	if err != nil {
 		log.Fatalf("Failed to initialize admin handler: %v", err)
 	}
+
+	// Setup wizard - runs if password is not set or -setup flag is provided
+	setupHandler := handlers.NewSetupHandler(cfg, *setupMode)
+	if setupHandler.IsSetupRequired() {
+		setupHandler.RegisterRoutes(router)
+		router.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/setup", http.StatusFound)
+		})
+		log.Printf("Setup wizard enabled at /setup")
+	} else {
+		router.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/admin/dashboard", http.StatusFound)
+		})
+	}
+
 	adminHandler.RegisterRoutes(router)
 
 	// Prometheus metrics endpoint
