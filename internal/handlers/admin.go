@@ -673,11 +673,25 @@ func formatDate(t time.Time) string {
 	return t.Format("Jan 02, 2006 15:04")
 }
 
-func formatDuration(ms int) string {
-	if ms < 1000 {
-		return fmt.Sprintf("%dms", ms)
+func formatDuration(ms interface{}) string {
+	var m int
+	switch v := ms.(type) {
+	case int:
+		m = v
+	case float64:
+		m = int(v)
+	default:
+		return "0ms"
 	}
-	return fmt.Sprintf("%.1fs", float64(ms)/1000)
+	if m < 1000 {
+		return fmt.Sprintf("%dms", m)
+	}
+	if m < 60000 {
+		return fmt.Sprintf("%.1fs", float64(m)/1000)
+	}
+	mins := m / 60000
+	secs := (m % 60000) / 1000
+	return fmt.Sprintf("%dm %ds", mins, secs)
 }
 
 func formatInt(n interface{}) string {
@@ -2060,7 +2074,7 @@ var adminTemplates = []byte(`
                             <td class="px-6 py-4 text-sm text-white">{{.Model}}</td>
                             <td class="px-6 py-4 text-sm text-gray-300">{{formatInt .TotalRequests}}</td>
                             <td class="px-6 py-4 text-sm text-gray-300">{{formatInt .TotalTokens}}</td>
-                            <td class="px-6 py-4 text-sm text-gray-300">{{formatDuration (printf "%.0f" .AvgLatencyMs | int)}}</td>
+                            <td class="px-6 py-4 text-sm text-gray-300">{{formatDuration .AvgLatencyMs}}</td>
                             <td class="px-6 py-4 text-sm">
                                 <span class="px-2 py-1 text-xs font-medium rounded-full {{if ge .SuccessRate 95.0}}bg-green-500/20 text-green-400{{else if ge .SuccessRate 80.0}}bg-yellow-500/20 text-yellow-400{{else}}bg-red-500/20 text-red-400{{end}}">
                                     {{printf "%.1f" .SuccessRate}}%
