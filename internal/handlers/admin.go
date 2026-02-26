@@ -40,6 +40,7 @@ func KnownProviderTypes() []string {
 		"ollama",
 		"lmstudio",
 		"vllm",
+		"openrouter",
 	}
 }
 

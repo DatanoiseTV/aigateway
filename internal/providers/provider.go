@@ -200,6 +200,8 @@ func buildProvider(name string, pcfg config.ProviderConfig) Provider {
 		return NewAzureOpenAIProvider(pcfg)
 	case "vllm":
 		return NewVLLMProvider(pcfg)
+	case "openrouter":
+		return NewOpenRouterProvider(pcfg)
 	default:
 		// Treat unknown types as OpenAI-compatible
 		return NewOpenAIProvider(name, pcfg)
