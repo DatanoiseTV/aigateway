@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
+	"log"
 	"net/http"
 	"sync"
 
@@ -10,11 +10,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
-	requestsTotal = promauto.NewCounterVec(
+	requestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "ai_gateway_requests_total",
 			Help: "Total number of requests",
@@ -22,12 +22,12 @@ var (
 		[]string{"client_id", "model", "status"},
 	)
 
-	requestsInProgress = promauto.NewGauge(prometheus.GaugeOpts{
+	requestsInProgress = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ai_gateway_requests_in_progress",
 		Help: "Number of requests currently being processed",
 	})
 
-	inputTokensTotal = promauto.NewCounterVec(
+	inputTokensTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "ai_gateway_input_tokens_total",
 			Help: "Total number of input tokens",
@@ -35,7 +35,7 @@ var (
 		[]string{"client_id", "model"},
 	)
 
-	outputTokensTotal = promauto.NewCounterVec(
+	outputTokensTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "ai_gateway_output_tokens_total",
 			Help: "Total number of output tokens",
@@ -43,7 +43,7 @@ var (
 		[]string{"client_id", "model"},
 	)
 
-	requestDuration = promauto.NewHistogramVec(
+	requestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "ai_gateway_request_duration_seconds",
 			Help:    "Request duration in seconds",
@@ -52,12 +52,12 @@ var (
 		[]string{"client_id", "model"},
 	)
 
-	activeClients = promauto.NewGauge(prometheus.GaugeOpts{
+	activeClients = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ai_gateway_active_clients",
 		Help: "Number of active clients",
 	})
 
-	upstreamErrors = promauto.NewCounterVec(
+	upstreamErrors = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "ai_gateway_upstream_errors_total",
 			Help: "Total number of upstream errors",
@@ -66,10 +66,36 @@ var (
 	)
 )
 
+func init() {
+	if err := prometheus.Register(requestsTotal); err != nil {
+		log.Printf("[METRICS] Failed to register requestsTotal: %v", err)
+	}
+	if err := prometheus.Register(requestsInProgress); err != nil {
+		log.Printf("[METRICS] Failed to register requestsInProgress: %v", err)
+	}
+	if err := prometheus.Register(inputTokensTotal); err != nil {
+		log.Printf("[METRICS] Failed to register inputTokensTotal: %v", err)
+	}
+	if err := prometheus.Register(outputTokensTotal); err != nil {
+		log.Printf("[METRICS] Failed to register outputTokensTotal: %v", err)
+	}
+	if err := prometheus.Register(requestDuration); err != nil {
+		log.Printf("[METRICS] Failed to register requestDuration: %v", err)
+	}
+	if err := prometheus.Register(activeClients); err != nil {
+		log.Printf("[METRICS] Failed to register activeClients: %v", err)
+	}
+	if err := prometheus.Register(upstreamErrors); err != nil {
+		log.Printf("[METRICS] Failed to register upstreamErrors: %v", err)
+	}
+	log.Println("[METRICS] Registered custom Prometheus metrics")
+}
+
 type MetricsHandler struct {
 	statsService *services.StatsService
 	username     string
 	password     string
+	promHandler  http.Handler
 }
 
 func NewMetricsHandler(statsService *services.StatsService, username, password string) *MetricsHandler {
@@ -77,6 +103,7 @@ func NewMetricsHandler(statsService *services.StatsService, username, password s
 		statsService: statsService,
 		username:     username,
 		password:     password,
+		promHandler:  promhttp.Handler(),
 	}
 }
 
@@ -85,24 +112,7 @@ func (h *MetricsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`# HELP ai_gateway_requests_total Total number of requests
-# TYPE ai_gateway_requests_total counter
-`))
-
-	stats, err := h.statsService.GetGlobalStats()
-	if err == nil && stats != nil {
-		clientStats, _ := h.statsService.GetAllClientStats()
-		for _, cs := range clientStats {
-			model := "unknown"
-			if cs.RequestsToday > 0 {
-				model = "all"
-			}
-			fmt.Fprintf(w, "ai_gateway_requests_total{client_id=\"%s\",model=\"%s\",status=\"200\"} %d\n", cs.ClientID, model, cs.RequestsToday)
-		}
-		fmt.Fprintf(w, "ai_gateway_active_clients %d\n", stats.ActiveClients)
-	}
+	h.promHandler.ServeHTTP(w, r)
 }
 
 func (h *MetricsHandler) authenticate(w http.ResponseWriter, r *http.Request) bool {

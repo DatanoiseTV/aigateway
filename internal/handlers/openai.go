@@ -235,12 +235,55 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// Handle fallback models
+	fallbackModels := parseFallbackModels(client.FallbackModels)
+	if len(fallbackModels) > 0 {
+		log.Printf("[CHAT] Fallback models configured: %v", fallbackModels)
+	}
+
 	if req.Stream {
-		h.handleStreamingRequest(w, r, client, req, provider, chatReq, string(body))
+		h.handleStreamingRequestWithFallback(w, r, client, req, provider, chatReq, string(body), fallbackModels)
 		return
 	}
 
-	h.handleNonStreamingRequest(w, client, req, provider, chatReq, string(body))
+	h.handleNonStreamingRequestWithFallback(w, client, req, provider, chatReq, string(body), fallbackModels)
+}
+
+// parseFallbackModels parses comma-separated fallback model names
+func parseFallbackModels(fallbackStr string) []string {
+	if fallbackStr == "" {
+		return nil
+	}
+	var models []string
+	for _, m := range strings.Split(fallbackStr, ",") {
+		m = strings.TrimSpace(m)
+		if m != "" {
+			models = append(models, m)
+		}
+	}
+	return models
+}
+
+// isRetryableError checks if an error warrants trying a fallback model
+func isRetryableError(statusCode int, errMsg string) bool {
+	// Retry on rate limit errors
+	if statusCode == 429 {
+		return true
+	}
+	// Retry on upstream server errors
+	if statusCode >= 500 && statusCode <= 599 {
+		return true
+	}
+	// Retry on specific error messages
+	lowerErr := strings.ToLower(errMsg)
+	if strings.Contains(lowerErr, "rate limit") ||
+		strings.Contains(lowerErr, "quota") ||
+		strings.Contains(lowerErr, "too many requests") ||
+		strings.Contains(lowerErr, "insufficient_quota") ||
+		strings.Contains(lowerErr, "billing") {
+		return true
+	}
+	return false
 }
 
 // buildChatRequest converts the OpenAI-format request into our internal ChatRequest,
@@ -500,7 +543,8 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 	}
 
 	responseText, inputTokens, outputTokens, _ := provider.ParseResponse(respBody)
-	h.geminiService.LogRequest(client.ID, chatReq.Model, statusCode, inputTokens, outputTokens, latencyMs, "", requestBody, chatReq.Stream, len(chatReq.Tools) > 0, strings.Join(toolNames, ","))
+	h.geminiService.LogRequest(client.ID, chatReq.Model, statusCode, inputTokens, outputTokens, latencyMs, "", requestBody, chatReq.Stream, len(toolNames) > 0, strings.Join(toolNames, ","))
+	RecordRequest(client.ID, chatReq.Model, fmt.Sprintf("%d", statusCode), inputTokens, outputTokens, latencyMs)
 
 	if h.statsService != nil {
 		h.statsService.DecrementRequestsInProgress()
@@ -538,6 +582,65 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 	if client.BackendModels == "" {
 		h.updateClientModels(client, provider)
 	}
+}
+
+// handleNonStreamingRequestWithFallback handles requests with automatic fallback to backup models
+func (h *OpenAIHandler) handleNonStreamingRequestWithFallback(w http.ResponseWriter, client *models.Client, req OpenAIChatRequest, provider providers.Provider, chatReq *providers.ChatRequest, requestBody string, fallbackModels []string) {
+	// Try primary model first
+	err := h.tryNonStreamingRequest(w, client, req, provider, chatReq, requestBody)
+
+	// If successful or no fallback configured, we're done
+	if err == nil || len(fallbackModels) == 0 {
+		return
+	}
+
+	// Try fallback models
+	originalModel := chatReq.Model
+	for i, fallbackModel := range fallbackModels {
+		log.Printf("[CHAT] Trying fallback model %d: %s (error: %v)", i+1, fallbackModel, err)
+		chatReq.Model = fallbackModel
+
+		err = h.tryNonStreamingRequest(w, client, req, provider, chatReq, requestBody)
+		if err == nil {
+			log.Printf("[CHAT] Fallback model %s succeeded", fallbackModel)
+			return
+		}
+	}
+
+	// All models failed, return the last error
+	chatReq.Model = originalModel
+}
+
+// tryNonStreamingRequest attempts a single non-streaming request
+func (h *OpenAIHandler) tryNonStreamingRequest(w http.ResponseWriter, client *models.Client, req OpenAIChatRequest, provider providers.Provider, chatReq *providers.ChatRequest, requestBody string) error {
+	start := time.Now()
+
+	respBody, statusCode, err := provider.ChatCompletion(chatReq)
+	latencyMs := int(time.Since(start).Milliseconds())
+
+	if err != nil {
+		log.Printf("[CHAT] %s request error: %v", provider.Name(), err)
+		writeOpenAIError(w, http.StatusBadGateway, "Upstream request failed: "+err.Error(), "api_error")
+		if h.statsService != nil {
+			h.statsService.DecrementRequestsInProgress()
+		}
+		return err
+	}
+
+	log.Printf("[CHAT] %s response status: %d, latency: %dms", provider.Name(), statusCode, latencyMs)
+
+	if statusCode >= 400 {
+		errMsg := extractErrorMessage(respBody)
+		log.Printf("[CHAT] %s error: %s", provider.Name(), errMsg)
+		httpStatus := mapUpstreamStatusToHTTP(statusCode)
+		writeOpenAIError(w, httpStatus, errMsg, "api_error")
+		if h.statsService != nil {
+			h.statsService.DecrementRequestsInProgress()
+		}
+		return fmt.Errorf("status %d: %s", statusCode, errMsg)
+	}
+
+	return nil
 }
 
 // handleStreamingRequest sends a streaming request through the provider,
@@ -831,7 +934,8 @@ toolLoop:
 	flusher.Flush()
 
 	// Log the request after streaming completes
-	h.geminiService.LogRequest(client.ID, chatReq.Model, resp.StatusCode, inputTokens, outputTokens, latencyMs, "", requestBody, chatReq.Stream, len(chatReq.Tools) > 0, strings.Join(toolNames, ","))
+	h.geminiService.LogRequest(client.ID, chatReq.Model, resp.StatusCode, inputTokens, outputTokens, latencyMs, "", requestBody, chatReq.Stream, len(toolNames) > 0, strings.Join(toolNames, ","))
+	RecordRequest(client.ID, chatReq.Model, fmt.Sprintf("%d", resp.StatusCode), inputTokens, outputTokens, latencyMs)
 
 	if h.statsService != nil {
 		h.statsService.DecrementRequestsInProgress()
@@ -841,6 +945,364 @@ toolLoop:
 	if client.BackendModels == "" {
 		h.updateClientModels(client, provider)
 	}
+}
+
+// handleStreamingRequestWithFallback handles streaming requests with automatic fallback to backup models
+func (h *OpenAIHandler) handleStreamingRequestWithFallback(w http.ResponseWriter, r *http.Request, client *models.Client, req OpenAIChatRequest, provider providers.Provider, chatReq *providers.ChatRequest, requestBody string, fallbackModels []string) {
+	// Try primary model first
+	err := h.tryStreamingRequest(w, r, client, req, provider, chatReq, requestBody)
+
+	// If successful or no fallback configured, we're done
+	if err == nil || len(fallbackModels) == 0 {
+		return
+	}
+
+	// Check if error is retryable (before streaming started)
+	if !isRetryableError(0, err.Error()) {
+		return
+	}
+
+	// Try fallback models
+	originalModel := chatReq.Model
+	for i, fallbackModel := range fallbackModels {
+		log.Printf("[CHAT] Streaming fallback: trying model %d: %s (error: %v)", i+1, fallbackModel, err)
+		chatReq.Model = fallbackModel
+
+		err = h.tryStreamingRequest(w, r, client, req, provider, chatReq, requestBody)
+		if err == nil {
+			log.Printf("[CHAT] Streaming fallback model %s succeeded", fallbackModel)
+			return
+		}
+
+		// Check if retryable
+		if !isRetryableError(0, err.Error()) {
+			return
+		}
+	}
+
+	// All models failed, restore original model
+	chatReq.Model = originalModel
+}
+
+// tryStreamingRequest attempts a single streaming request, returns error if streaming failed to start
+func (h *OpenAIHandler) tryStreamingRequest(w http.ResponseWriter, r *http.Request, client *models.Client, req OpenAIChatRequest, provider providers.Provider, chatReq *providers.ChatRequest, requestBody string) error {
+	start := time.Now()
+	var toolNames []string
+
+	log.Printf("[CHAT] %s calling ChatCompletionStream with model: %s, ToolMode: %q", provider.Name(), chatReq.Model, client.ToolMode)
+
+	resp, err := provider.ChatCompletionStream(chatReq)
+	if err != nil {
+		log.Printf("[CHAT] %s stream error: %v", provider.Name(), err)
+		writeOpenAIError(w, http.StatusBadGateway, "Upstream request failed: "+err.Error(), "api_error")
+		if h.statsService != nil {
+			h.statsService.DecrementRequestsInProgress()
+		}
+		return err
+	}
+	defer resp.Body.Close()
+
+	log.Printf("[CHAT] %s stream response status: %d", provider.Name(), resp.StatusCode)
+
+	// If provider returned an error status, read the body and return error
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		latencyMs := int(time.Since(start).Milliseconds())
+		log.Printf("[CHAT] %s stream error status: %d, latency: %dms", provider.Name(), resp.StatusCode, latencyMs)
+
+		errMsg := extractErrorMessage(body)
+		log.Printf("[CHAT] %s error: %s", provider.Name(), errMsg)
+		httpStatus := mapUpstreamStatusToHTTP(resp.StatusCode)
+		writeOpenAIError(w, httpStatus, errMsg, "api_error")
+		if h.statsService != nil {
+			h.statsService.DecrementRequestsInProgress()
+		}
+		return fmt.Errorf("status %d: %s", resp.StatusCode, errMsg)
+	}
+
+	// Set up SSE headers for the client - at this point we can't fallback anymore
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	responseID := "chatcmpl-" + randomID(12)
+	created := time.Now().Unix()
+	w.Header().Set("x-request-id", responseID)
+	w.WriteHeader(http.StatusOK)
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		log.Printf("[CHAT] ResponseWriter does not implement http.Flusher")
+		if h.statsService != nil {
+			h.statsService.DecrementRequestsInProgress()
+		}
+		return nil
+	}
+
+	// Send the initial role chunk
+	sendSSEChunk(w, flusher, responseID, req.Model, created, map[string]interface{}{"role": "assistant", "content": ""}, nil)
+
+	// Read upstream SSE stream and forward chunks
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
+
+	prefix := provider.StreamDataPrefix()
+	var inputTokens, outputTokens int
+	chunkCount := 0
+
+	var totalText, accumulatedText strings.Builder
+	toolCallID := ""
+	var toolCallName, toolCallArgs string
+	inToolCall := false
+	hasToolCall := false
+
+toolLoop:
+	for iteration := 0; iteration < 10; iteration++ {
+		for scanner.Scan() {
+			line := scanner.Text()
+
+			// Skip empty lines
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+
+			// Remove data: prefix if present
+			if strings.HasPrefix(line, prefix) {
+				line = strings.TrimPrefix(line, prefix)
+				line = strings.TrimSpace(line)
+			} else {
+				continue
+			}
+
+			// Skip [DONE] marker
+			if line == "[DONE]" {
+				continue
+			}
+
+			// Parse the JSON data
+			var data map[string]interface{}
+			if err := json.Unmarshal([]byte(line), &data); err != nil {
+				log.Printf("[CHAT] Failed to parse stream chunk: %v", err)
+				continue
+			}
+
+			// Extract finish_reason
+			finishReason := ""
+			if choices, ok := data["choices"].([]interface{}); ok && len(choices) > 0 {
+				if choice, ok := choices[0].(map[string]interface{}); ok {
+					if fr, ok := choice["finish_reason"].(string); ok {
+						finishReason = fr
+					}
+					// Handle delta with content
+					if delta, ok := choice["delta"].(map[string]interface{}); ok {
+						// Check for content
+						if content, ok := delta["content"].(string); ok && content != "" {
+							chunkCount++
+							accumulatedText.WriteString(content)
+							totalText.WriteString(content)
+							sendSSEChunk(w, flusher, responseID, req.Model, created, map[string]interface{}{"content": content}, nil)
+						}
+
+						// Check for tool_calls
+						if tc, ok := delta["tool_calls"].([]interface{}); ok && len(tc) > 0 {
+							hasToolCall = true
+							inToolCall = true
+
+							for _, tcItem := range tc {
+								if tcMap, ok := tcItem.(map[string]interface{}); ok {
+									// Extract tool call ID
+									if id, ok := tcMap["id"].(string); ok && id != "" {
+										toolCallID = id
+									}
+
+									// Extract function name (may be partial)
+									if fn, ok := tcMap["function"].(map[string]interface{}); ok {
+										if name, ok := fn["name"].(string); ok && name != "" {
+											toolCallName = name
+										}
+										if args, ok := fn["arguments"].(string); ok && args != "" {
+											toolCallArgs += args
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// Log finish reason for debugging
+			if finishReason != "" && finishReason != "null" && finishReason != "stop" {
+				log.Printf("[CHAT] %s chunk finish_reason: %s, toolCallName: %s, toolCallArgs: %s", provider.Name(), finishReason, toolCallName, toolCallArgs)
+			}
+
+			// If finish_reason is tool_calls, execute the tool
+			if finishReason == "tool_calls" && hasToolCall {
+				log.Printf("[CHAT] %s streaming tool call detected: %s with args: %s", provider.Name(), toolCallName, toolCallArgs)
+				toolNames = append(toolNames, toolCallName)
+				break
+			}
+
+			// Regular text content
+			text, it, ot := provider.ParseStreamChunk([]byte(line))
+			if it > 0 {
+				inputTokens = it
+			}
+			if ot > 0 {
+				outputTokens = ot
+			}
+
+			if text != "" && !inToolCall {
+				chunkCount++
+				accumulatedText.WriteString(text)
+				totalText.WriteString(text)
+				sendSSEChunk(w, flusher, responseID, req.Model, created, map[string]interface{}{"content": text}, nil)
+			}
+		}
+
+		// If no tool call detected in this iteration, we're done
+		if !hasToolCall {
+			break toolLoop
+		}
+
+		// Check if tool mode is pass-through (forward tool_calls to client)
+		if client.ToolMode == "pass-through" {
+			log.Printf("[CHAT] %s tool call detected, passing through to client (ToolMode=pass-through)", provider.Name())
+			// Send tool_calls in a chunk and end stream - client will handle execution
+			toolCallsChunk := map[string]interface{}{
+				"tool_calls": []map[string]interface{}{
+					{
+						"id":    toolCallID,
+						"index": 0,
+						"type":  "function",
+						"function": map[string]interface{}{
+							"name":      toolCallName,
+							"arguments": toolCallArgs,
+						},
+					},
+				},
+			}
+			sendSSEChunk(w, flusher, responseID, req.Model, created, toolCallsChunk, nil)
+			// End the stream with finish_reason: tool_calls
+			finishChunk := map[string]interface{}{
+				"choices": []map[string]interface{}{
+					{
+						"index":         0,
+						"delta":         map[string]interface{}{},
+						"finish_reason": "tool_calls",
+					},
+				},
+			}
+			sendSSEChunk(w, flusher, responseID, req.Model, created, finishChunk, nil)
+			fmt.Fprintf(w, "data: [DONE]\n\n")
+			flusher.Flush()
+			return nil
+		}
+
+		// Execute the tool (gateway mode)
+		log.Printf("[CHAT] %s executing tool: %s with args: %s", provider.Name(), toolCallName, toolCallArgs)
+
+		// Add assistant's tool call message first
+		chatReq.Messages = append(chatReq.Messages, providers.ChatMessage{
+			Role: "assistant",
+			ToolCalls: []providers.ToolCall{{
+				ID:        toolCallID,
+				Name:      toolCallName,
+				Arguments: toolCallArgs,
+			}},
+		})
+
+		var args map[string]interface{}
+		if err := json.Unmarshal([]byte(toolCallArgs), &args); err != nil {
+			log.Printf("[CHAT] Failed to parse tool args: %v", err)
+			args = map[string]interface{}{"raw": toolCallArgs}
+		}
+
+		result, err := h.toolService.Execute(toolCallName, args)
+		if err != nil {
+			log.Printf("[CHAT] Tool execution error: %v", err)
+			result = `{"error": "tool execution failed"}`
+		}
+
+		// Add tool result as message
+		chatReq.Messages = append(chatReq.Messages, providers.ChatMessage{
+			Role:       "tool",
+			ToolCallID: toolCallID,
+			Content:    result,
+		})
+
+		log.Printf("[CHAT] %s tool result: %s", provider.Name(), result)
+
+		// Remove tools from request for final response
+		chatReq.Tools = nil
+
+		// Re-query with tool results - start new streaming request
+		log.Printf("[CHAT] %s re-querying with tool results (iteration %d)", provider.Name(), iteration+1)
+
+		resp.Body.Close()
+		resp, err = provider.ChatCompletionStream(chatReq)
+		if err != nil {
+			log.Printf("[CHAT] %s tool loop stream error: %v", provider.Name(), err)
+			break
+		}
+
+		scanner = bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
+
+		// Update response ID for new stream
+		responseID = "chatcmpl-" + randomID(12)
+		created = time.Now().Unix()
+		w.Header().Set("x-request-id", responseID)
+	}
+
+	latencyMs := int(time.Since(start).Milliseconds())
+
+	// Estimate tokens if not provided by provider (e.g., LM Studio doesn't send usage in stream)
+	if outputTokens == 0 && totalText.Len() > 0 {
+		outputTokens = totalText.Len() / 4
+		log.Printf("[CHAT] Estimated output tokens: %d (from %d chars)", outputTokens, totalText.Len())
+	}
+
+	log.Printf("[CHAT] Stream completed: %d chunks, %d input tokens, %d output tokens, latency: %dms", chunkCount, inputTokens, outputTokens, latencyMs)
+
+	// Send the final stop chunk with usage info
+	finalChunk := map[string]interface{}{
+		"id":      responseID,
+		"object":  "chat.completion.chunk",
+		"created": created,
+		"model":   req.Model,
+		"choices": []map[string]interface{}{
+			{
+				"index":         0,
+				"delta":         map[string]interface{}{},
+				"finish_reason": "stop",
+			},
+		},
+		"usage": map[string]interface{}{
+			"prompt_tokens":     inputTokens,
+			"completion_tokens": outputTokens,
+			"total_tokens":      inputTokens + outputTokens,
+		},
+	}
+	data, _ := json.Marshal(finalChunk)
+	fmt.Fprintf(w, "data: %s\n\n", data)
+	fmt.Fprintf(w, "data: [DONE]\n\n")
+	flusher.Flush()
+
+	// Log the request after streaming completes
+	h.geminiService.LogRequest(client.ID, chatReq.Model, resp.StatusCode, inputTokens, outputTokens, latencyMs, "", requestBody, chatReq.Stream, len(toolNames) > 0, strings.Join(toolNames, ","))
+	RecordRequest(client.ID, chatReq.Model, fmt.Sprintf("%d", resp.StatusCode), inputTokens, outputTokens, latencyMs)
+
+	if h.statsService != nil {
+		h.statsService.DecrementRequestsInProgress()
+	}
+
+	// Update client models if not already cached
+	if client.BackendModels == "" {
+		h.updateClientModels(client, provider)
+	}
+
+	return nil
 }
 
 // sendSSEChunk writes a single OpenAI-format SSE chunk to the client.

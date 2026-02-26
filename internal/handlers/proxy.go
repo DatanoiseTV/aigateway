@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -84,6 +85,7 @@ func (h *ProxyHandler) GenerateContent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.geminiService.LogRequest(client.ID, model, statusCode, inputTokens, outputTokens, latencyMs, errMsg, string(body), false, false, "")
+	RecordRequest(client.ID, model, fmt.Sprintf("%d", statusCode), inputTokens, outputTokens, latencyMs)
 
 	if h.statsService != nil {
 		h.statsService.DecrementRequestsInProgress()

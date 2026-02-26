@@ -9,6 +9,7 @@ admin:
     username: admin
     password_hash: $2a$10$4XSqLvs1o0Oi8jVyhDQIYOG5a5/5/EAubMVNWZLGu0VF9t2b0vd6K
     session_secret: e29ad02fae8192569b578627528aead9
+providers: {}
 defaults:
     rate_limit:
         requests_per_minute: 60
@@ -25,3 +26,7 @@ database:
 logging:
     level: info
     file: ./logs/gateway.log
+prometheus:
+    enabled: true
+    username: prometheus
+    password: 5247d2af36d4bf7d0260

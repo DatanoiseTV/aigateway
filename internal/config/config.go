@@ -285,6 +285,16 @@ func ensureDefaults(cfg Config, path string) (Config, error) {
 		fmt.Printf("===========================================\n\n")
 	}
 
+	if cfg.Prometheus.Enabled && cfg.Prometheus.Username != "" && cfg.Prometheus.Password == "" {
+		cfg.Prometheus.Password = generateRandomString(20)
+		changed = true
+		fmt.Printf("\n===========================================\n")
+		fmt.Printf("  Prometheus password generated!\n")
+		fmt.Printf("  Username: %s\n", cfg.Prometheus.Username)
+		fmt.Printf("  Password: %s\n", cfg.Prometheus.Password)
+		fmt.Printf("===========================================\n\n")
+	}
+
 	if changed {
 		if err := saveConfig(&cfg, path); err != nil {
 			return cfg, err

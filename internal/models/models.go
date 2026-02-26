@@ -22,6 +22,8 @@ type Client struct {
 	BackendDefaultModel string `gorm:"type:varchar(200)" json:"backend_default_model,omitempty"`
 	// BackendModels is a JSON array of available models fetched from the backend
 	BackendModels string `gorm:"type:text" json:"backend_models,omitempty"`
+	// FallbackModels is a comma-separated list of model names to try if the primary model fails
+	FallbackModels string `gorm:"type:varchar(500)" json:"fallback_models,omitempty"`
 	// SystemPrompt is an optional system prompt prepended to every request from this client
 	SystemPrompt string `gorm:"type:text" json:"system_prompt,omitempty"`
 	// ToolMode determines how tool calls are handled:

@@ -48,6 +48,7 @@
 - [x] GitHub Actions CI/CD: build on push, release binaries on tag
 - [x] Makefile for local build and cross-compilation
 - [x] config.example.yaml for safe distribution
+- [x] Add automatic fallback management for models (fallback models on rate limit, quota, server errors)
 
 ### Next Steps
 - Test streaming with all provider backends

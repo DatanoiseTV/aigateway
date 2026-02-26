@@ -238,6 +238,7 @@ func (h *AdminHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 	backendDefaultModel := r.Form.Get("backend_default_model")
 	systemPrompt := r.Form.Get("system_prompt")
 	toolMode := r.Form.Get("tool_mode")
+	fallbackModels := r.Form.Get("fallback_models")
 
 	if name == "" {
 		http.Error(w, "Name is required", http.StatusBadRequest)
@@ -252,6 +253,7 @@ func (h *AdminHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 		client.BackendDefaultModel = backendDefaultModel
 		client.SystemPrompt = systemPrompt
 		client.ToolMode = toolMode
+		client.FallbackModels = fallbackModels
 		h.clientService.UpdateClient(client)
 	}
 	if err != nil {
@@ -306,6 +308,7 @@ func (h *AdminHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	backendDefaultModel := r.Form.Get("backend_default_model")
 	systemPrompt := r.Form.Get("system_prompt")
 	toolMode := r.Form.Get("tool_mode")
+	fallbackModels := r.Form.Get("fallback_models")
 	rateLimitMinute := parseInt(r.Form.Get("rate_limit_minute"), 60)
 	rateLimitHour := parseInt(r.Form.Get("rate_limit_hour"), 1000)
 	rateLimitDay := parseInt(r.Form.Get("rate_limit_day"), 10000)
@@ -331,6 +334,7 @@ func (h *AdminHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	client.BackendDefaultModel = backendDefaultModel
 	client.SystemPrompt = systemPrompt
 	client.ToolMode = toolMode
+	client.FallbackModels = fallbackModels
 	client.RateLimitMinute = rateLimitMinute
 	client.RateLimitHour = rateLimitHour
 	client.RateLimitDay = rateLimitDay
@@ -1608,6 +1612,11 @@ var adminTemplates = []byte(`
                             <option value="gateway" {{if eq (index .Data "Client").ToolMode "gateway"}}selected{{end}}>Gateway (execute tools internally)</option>
                         </select>
                         <p class="text-gray-500 text-xs mt-1">Pass-through forwards tool_calls to the client (opencode) for execution.</p>
+                    </div>
+                    <div class="mb-6">
+                        <label class="block text-gray-400 text-sm font-medium mb-2">Fallback Models</label>
+                        <input type="text" name="fallback_models" placeholder="claude-3-haiku,claude-3-sonnet" value="{{(index .Data "Client").FallbackModels}}" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <p class="text-gray-500 text-xs mt-1">Comma-separated list of models to try if the primary model fails (rate limit, quota, server errors). Tried in order.</p>
                     </div>
 
                     <!-- Model Whitelist -->
