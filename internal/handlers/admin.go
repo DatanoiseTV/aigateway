@@ -1518,8 +1518,6 @@ var adminTemplates = []byte(`
 
         <!-- Charts Row -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <!-- Settings Form -->
             <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
                 <h3 class="text-lg font-semibold text-white mb-6">Client Settings</h3>
