@@ -88,7 +88,6 @@ func init() {
 	if err := prometheus.Register(upstreamErrors); err != nil {
 		log.Printf("[METRICS] Failed to register upstreamErrors: %v", err)
 	}
-	log.Println("[METRICS] Registered custom Prometheus metrics")
 }
 
 type MetricsHandler struct {

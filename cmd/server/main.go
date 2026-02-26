@@ -30,6 +30,7 @@ var (
 	version   = "dev"
 	commit    = "unknown"
 	buildTime = "unknown"
+	setupMode = flag.Bool("setup", false, "Run setup wizard")
 )
 
 func main() {
@@ -101,6 +102,21 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize admin handler: %v", err)
 	}
+
+	// Setup wizard - runs if password is not set or -setup flag is provided
+	setupHandler := handlers.NewSetupHandler(cfg, *setupMode)
+	if setupHandler.IsSetupRequired() {
+		setupHandler.RegisterRoutes(router)
+		router.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/setup", http.StatusFound)
+		})
+		log.Printf("Setup wizard enabled at /setup")
+	} else {
+		router.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/admin/dashboard", http.StatusFound)
+		})
+	}
+
 	adminHandler.RegisterRoutes(router)
 
 	// Prometheus metrics endpoint
