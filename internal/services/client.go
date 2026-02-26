@@ -94,6 +94,10 @@ func (s *ClientService) UpdateClient(client *models.Client) error {
 	return s.db.Save(client).Error
 }
 
+func (s *ClientService) UpdateLastSeen(clientID string) error {
+	return s.db.Model(&models.Client{}).Where("id = ?", clientID).Update("last_seen", time.Now()).Error
+}
+
 func (s *ClientService) DeleteClient(id string) error {
 	return s.db.Delete(&models.Client{}, "id = ?", id).Error
 }

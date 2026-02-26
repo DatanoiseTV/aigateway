@@ -32,8 +32,10 @@ func (s *StatsService) GetGlobalStats() (*models.Stats, error) {
 		return nil, err
 	}
 
+	// Count clients that were active in the last 5 seconds
+	fiveSecondsAgo := time.Now().Add(-5 * time.Second)
 	s.db.Model(&models.Client{}).
-		Where("is_active = ?", true).
+		Where("is_active = ? AND last_seen > ?", true, fiveSecondsAgo).
 		Count(&stats.ActiveClients)
 
 	s.db.Model(&models.Client{}).Count(&stats.TotalClients)
@@ -318,4 +320,30 @@ func (s *StatsService) GetClientStats2(days int) ([]ClientStats2, error) {
 	}
 
 	return clientStats, nil
+}
+
+type MinuteStats struct {
+	Timestamp     time.Time `json:"timestamp"`
+	TotalRequests int       `json:"total_requests"`
+	InputTokens   int       `json:"input_tokens"`
+	OutputTokens  int       `json:"output_tokens"`
+	UniqueClients int       `json:"unique_clients"`
+}
+
+func (s *StatsService) GetRecentStats(minutes int) ([]MinuteStats, error) {
+	startTime := time.Now().Add(-time.Duration(minutes) * time.Minute).Truncate(time.Minute)
+
+	var results []MinuteStats
+	err := s.db.Model(&models.RequestLog{}).
+		Select("created_at as timestamp, COUNT(*) as total_requests, COALESCE(SUM(input_tokens), 0) as input_tokens, COALESCE(SUM(output_tokens), 0) as output_tokens, COUNT(DISTINCT client_id) as unique_clients").
+		Where("created_at >= ?", startTime).
+		Group("DATE_TRUNC('minute', created_at)").
+		Order("timestamp ASC").
+		Scan(&results).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
 }

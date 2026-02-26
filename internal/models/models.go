@@ -23,17 +23,19 @@ type Client struct {
 	// BackendModels is a JSON array of available models fetched from the backend
 	BackendModels string `gorm:"type:text" json:"backend_models,omitempty"`
 	// SystemPrompt is an optional system prompt prepended to every request from this client
-	SystemPrompt         string    `gorm:"type:text" json:"system_prompt,omitempty"`
-	RateLimitMinute      int       `gorm:"default:60" json:"rate_limit_minute"`
-	RateLimitHour        int       `gorm:"default:1000" json:"rate_limit_hour"`
-	RateLimitDay         int       `gorm:"default:10000" json:"rate_limit_day"`
-	QuotaInputTokensDay  int       `gorm:"default:1000000" json:"quota_input_tokens_day"`
-	QuotaOutputTokensDay int       `gorm:"default:500000" json:"quota_output_tokens_day"`
-	QuotaRequestsDay     int       `gorm:"default:1000" json:"quota_requests_day"`
-	MaxInputTokens       int       `gorm:"default:1000000" json:"max_input_tokens"`
-	MaxOutputTokens      int       `gorm:"default:8192" json:"max_output_tokens"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
+	SystemPrompt         string `gorm:"type:text" json:"system_prompt,omitempty"`
+	RateLimitMinute      int    `gorm:"default:60" json:"rate_limit_minute"`
+	RateLimitHour        int    `gorm:"default:1000" json:"rate_limit_hour"`
+	RateLimitDay         int    `gorm:"default:10000" json:"rate_limit_day"`
+	QuotaInputTokensDay  int    `gorm:"default:1000000" json:"quota_input_tokens_day"`
+	QuotaOutputTokensDay int    `gorm:"default:500000" json:"quota_output_tokens_day"`
+	QuotaRequestsDay     int    `gorm:"default:1000" json:"quota_requests_day"`
+	MaxInputTokens       int    `gorm:"default:1000000" json:"max_input_tokens"`
+	MaxOutputTokens      int    `gorm:"default:8192" json:"max_output_tokens"`
+	// LastSeen tracks the last time this client made a request (used for "active" status)
+	LastSeen  time.Time `json:"last_seen"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type RequestLog struct {

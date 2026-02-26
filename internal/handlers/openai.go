@@ -319,6 +319,8 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Request, client *models.Client, req OpenAIChatRequest, provider providers.Provider, chatReq *providers.ChatRequest) {
 	start := time.Now()
 
+	log.Printf("[CHAT] %s calling ChatCompletionStream with model: %s", provider.Name(), chatReq.Model)
+
 	resp, err := provider.ChatCompletionStream(chatReq)
 	if err != nil {
 		log.Printf("[CHAT] %s stream error: %v", provider.Name(), err)
@@ -326,6 +328,8 @@ func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Re
 		return
 	}
 	defer resp.Body.Close()
+
+	log.Printf("[CHAT] %s stream response status: %d", provider.Name(), resp.StatusCode)
 
 	// If provider returned an error status, read the body and return error
 	if resp.StatusCode >= 400 {
@@ -369,6 +373,7 @@ func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Re
 
 	for scanner.Scan() {
 		line := scanner.Text()
+		log.Printf("[CHAT] %s stream line: %q", provider.Name(), line)
 
 		if !strings.HasPrefix(line, prefix) {
 			continue
@@ -376,6 +381,7 @@ func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Re
 
 		jsonData := strings.TrimPrefix(line, prefix)
 		if jsonData == "" || jsonData == "[DONE]" {
+			log.Printf("[CHAT] %s stream got DONE or empty", provider.Name())
 			continue
 		}
 
@@ -389,6 +395,7 @@ func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Re
 
 		if text != "" {
 			chunkCount++
+			log.Printf("[CHAT] %s stream chunk %d: %q", provider.Name(), chunkCount, text)
 			sendSSEChunk(w, flusher, responseID, req.Model, created, map[string]interface{}{"content": text}, nil)
 		}
 	}

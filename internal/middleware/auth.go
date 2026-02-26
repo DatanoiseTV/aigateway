@@ -25,6 +25,18 @@ func NewAuthMiddleware(clientService *services.ClientService) *AuthMiddleware {
 	}
 }
 
+// InvalidateCache removes a client from the auth cache so fresh data is used
+func (m *AuthMiddleware) InvalidateCache(clientID string) {
+	m.cache.Delete("client:*" + clientID)
+	// Also try the hash-based key
+	keys := m.cache.Items()
+	for k := range keys {
+		if strings.Contains(k, clientID) {
+			m.cache.Delete(k)
+		}
+	}
+}
+
 func (m *AuthMiddleware) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
@@ -44,7 +56,8 @@ func (m *AuthMiddleware) Handler(next http.Handler) http.Handler {
 		apiKey := parts[1]
 		log.Printf("[AUTH] Trying to authenticate API key: %s... for %s %s", apiKey[:min(8, len(apiKey))], r.Method, r.URL.Path)
 
-		client, err := m.getClientFromCacheOrDB(apiKey)
+		// Don't cache - always read fresh to pick up client config changes immediately
+		client, err := m.clientService.GetClientByAPIKey(apiKey)
 		if err != nil {
 			log.Printf("[AUTH] Error looking up client: %v", err)
 			http.Error(w, `{"error": "Internal server error"}`, http.StatusInternalServerError)
@@ -62,6 +75,9 @@ func (m *AuthMiddleware) Handler(next http.Handler) http.Handler {
 			http.Error(w, `{"error": "Client is disabled"}`, http.StatusForbidden)
 			return
 		}
+
+		// Update LastSeen in the background (don't wait)
+		go m.clientService.UpdateLastSeen(client.ID)
 
 		log.Printf("[AUTH] Authenticated client %s (%s) for %s %s", client.Name, client.ID, r.Method, r.URL.Path)
 		ctx := context.WithValue(r.Context(), ClientContextKey, client)

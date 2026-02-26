@@ -88,6 +88,10 @@ type LoggingConfig struct {
 	File  string `yaml:"file"`
 }
 
+func (c *LoggingConfig) IsDebug() bool {
+	return c.Level == "debug"
+}
+
 var configPath string
 
 func Load(path string) (*Config, error) {

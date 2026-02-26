@@ -182,14 +182,16 @@ func (h *AdminHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	stats, _ := h.statsService.GetGlobalStats()
 	recentLogs, _ := h.statsService.GetRecentRequests("", 20)
 	modelUsage, _ := h.statsService.GetModelUsage()
+	recentStats, _ := h.statsService.GetRecentStats(5)
 
 	h.render(w, "dashboard.html", PageData{
 		Title: "Dashboard",
 		User:  h.cfg.Admin.Username,
 		Data: map[string]interface{}{
-			"Stats":      stats,
-			"RecentLogs": recentLogs,
-			"ModelUsage": modelUsage,
+			"Stats":       stats,
+			"RecentLogs":  recentLogs,
+			"ModelUsage":  modelUsage,
+			"RecentStats": recentStats,
 		},
 	})
 }
@@ -893,17 +895,35 @@ var adminTemplates = []byte(`
             </div>
         </div>
 
+        <!-- Mini Charts Row -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
+                <p class="text-gray-400 text-xs mb-1">Input Tokens Trend</p>
+                <canvas id="miniInputChart" height="60"></canvas>
+            </div>
+            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
+                <p class="text-gray-400 text-xs mb-1">Output Tokens Trend</p>
+                <canvas id="miniOutputChart" height="60"></canvas>
+            </div>
+            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
+                <p class="text-gray-400 text-xs mb-1">Clients Trend</p>
+                <canvas id="miniClientsChart" height="60"></canvas>
+            </div>
+        </div>
+        
         <!-- Charts Row -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
                 <h3 class="text-lg font-semibold text-white mb-4">Model Usage</h3>
                 <canvas id="modelChart" height="200"></canvas>
             </div>
-            
-            <!-- Recent Requests -->
+        </div>
+        
+        <!-- Recent Requests -->
         <div class="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
-            <div class="px-6 py-4 border-b border-gray-700">
+            <div class="px-6 py-4 border-b border-gray-700 flex justify-between items-center">
                 <h3 class="text-lg font-semibold text-white">Recent Requests</h3>
+                <a href="/admin/stats" class="text-sm text-blue-400 hover:text-blue-300">View All</a>
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full">
@@ -1041,8 +1061,75 @@ var adminTemplates = []byte(`
             };
         }
 
+        // Mini charts for last 5 minutes
+        var recentStats = {{toJson (index .Data "RecentStats")}};
+        
+        // Poll for real-time stats every 2 seconds as backup to WebSocket
+        function pollStats() {
+            fetch('/admin/stats/api')
+                .then(function(res) { return res.json(); })
+                .then(function(stats) {
+                    document.getElementById('stat-requests').textContent = stats.total_requests;
+                    document.getElementById('stat-input-tokens').textContent = stats.total_input_tokens;
+                    document.getElementById('stat-output-tokens').textContent = stats.total_output_tokens;
+                    document.getElementById('stat-active-clients').textContent = stats.active_clients;
+                    document.getElementById('stat-total-clients').textContent = stats.total_clients;
+                })
+                .catch(function() {});
+        }
+        setInterval(pollStats, 2000);
+        
+        function initMiniCharts() {
+            if (!recentStats || recentStats.length === 0) return;
+            
+            var labels = recentStats.map(function(d) {
+                var date = new Date(d.timestamp);
+                return date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+            });
+            
+            // Input Tokens mini chart
+            var ctxInput = document.getElementById('miniInputChart');
+            if (ctxInput) {
+                new Chart(ctxInput, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{ data: recentStats.map(function(d) { return d.input_tokens; }), borderColor: '#10B981', tension: 0.3, fill: true, backgroundColor: 'rgba(16,185,129,0.1)', pointRadius: 0 }]
+                    },
+                    options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { display: false } } }
+                });
+            }
+            
+            // Output Tokens mini chart
+            var ctxOutput = document.getElementById('miniOutputChart');
+            if (ctxOutput) {
+                new Chart(ctxOutput, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{ data: recentStats.map(function(d) { return d.output_tokens; }), borderColor: '#8B5CF6', tension: 0.3, fill: true, backgroundColor: 'rgba(139,92,246,0.1)', pointRadius: 0 }]
+                    },
+                    options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { display: false } } }
+                });
+            }
+            
+            // Clients mini chart
+            var ctxClients = document.getElementById('miniClientsChart');
+            if (ctxClients) {
+                new Chart(ctxClients, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{ data: recentStats.map(function(d) { return d.unique_clients; }), borderColor: '#3B82F6', tension: 0.3, fill: true, backgroundColor: 'rgba(59,130,246,0.1)', pointRadius: 0 }]
+                    },
+                    options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { display: false } } }
+                });
+            }
+        }
+
         // Initialize chart with server-rendered data, then connect WS
         initChart({{(index .Data "ModelUsage")}});
+        initMiniChart();
         connectWS();
     </script>
 </body>

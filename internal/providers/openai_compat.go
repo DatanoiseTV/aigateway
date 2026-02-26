@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -98,14 +99,20 @@ func (p *OpenAICompatProvider) ChatCompletion(req *ChatRequest) ([]byte, int, er
 	case "ollama":
 		url = p.cfg.BaseURL + "/api/chat"
 	case "lmstudio":
-		// LM Studio base URL already includes /v1
-		url = p.cfg.BaseURL + "/chat/completions"
+		// LM Studio - ensure /v1 is in the URL
+		baseURL := p.cfg.BaseURL
+		if !strings.HasSuffix(baseURL, "/v1") {
+			baseURL = strings.TrimSuffix(baseURL, "/") + "/v1"
+		}
+		url = baseURL + "/chat/completions"
 	default:
 		// OpenAI, Mistral, etc. - base URL already includes /v1
 		url = p.cfg.BaseURL + "/chat/completions"
 	}
 
-	log.Printf("[%s] Request to %s: %s", p.name, url, string(body))
+	if isDebug() {
+		log.Printf("[%s] Request to %s: %s", p.name, url, string(body))
+	}
 
 	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
@@ -125,9 +132,15 @@ func (p *OpenAICompatProvider) ChatCompletion(req *ChatRequest) ([]byte, int, er
 		return nil, resp.StatusCode, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	log.Printf("[%s] Response: %d - %s", p.name, resp.StatusCode, string(respBody))
+	if isDebug() {
+		log.Printf("[%s] Response: %d - %s", p.name, resp.StatusCode, string(respBody))
+	}
 
 	return respBody, resp.StatusCode, nil
+}
+
+func isDebug() bool {
+	return os.Getenv("DEBUG") == "1" || os.Getenv("DEBUG") == "true"
 }
 
 func (p *OpenAICompatProvider) ChatCompletionStream(req *ChatRequest) (*http.Response, error) {
@@ -139,12 +152,18 @@ func (p *OpenAICompatProvider) ChatCompletionStream(req *ChatRequest) (*http.Res
 	case "ollama":
 		url = p.cfg.BaseURL + "/api/chat"
 	case "lmstudio":
-		// LM Studio base URL already includes /v1
-		url = p.cfg.BaseURL + "/chat/completions"
+		// LM Studio - ensure /v1 is in the URL
+		baseURL := p.cfg.BaseURL
+		if !strings.HasSuffix(baseURL, "/v1") {
+			baseURL = strings.TrimSuffix(baseURL, "/") + "/v1"
+		}
+		url = baseURL + "/chat/completions"
 	default:
 		// OpenAI, Mistral, etc. - base URL already includes /v1
 		url = p.cfg.BaseURL + "/chat/completions"
 	}
+
+	log.Printf("[%s] Stream request to %s: %s", p.name, url, string(body))
 
 	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
@@ -152,8 +171,16 @@ func (p *OpenAICompatProvider) ChatCompletionStream(req *ChatRequest) (*http.Res
 	}
 	p.setHeaders(httpReq)
 
+	log.Printf("[%s] Stream request headers: %v", p.name, httpReq.Header)
+
 	client := &http.Client{Timeout: time.Duration(p.cfg.TimeoutSeconds) * time.Second}
-	return client.Do(httpReq)
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+
+	log.Printf("[%s] Stream response status: %d", p.name, resp.StatusCode)
+	return resp, nil
 }
 
 func (p *OpenAICompatProvider) setHeaders(req *http.Request) {
@@ -303,7 +330,9 @@ func (p *OpenAICompatProvider) FetchModels() ([]string, error) {
 		url = p.cfg.BaseURL + "/models"
 	}
 
-	log.Printf("[%s] FetchModels URL: %s", p.name, url)
+	if isDebug() {
+		log.Printf("[%s] FetchModels URL: %s", p.name, url)
+	}
 
 	httpReq, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -311,7 +340,9 @@ func (p *OpenAICompatProvider) FetchModels() ([]string, error) {
 	}
 	p.setHeaders(httpReq)
 
-	log.Printf("[%s] FetchModels headers: %v", p.name, httpReq.Header)
+	if isDebug() {
+		log.Printf("[%s] FetchModels headers: %v", p.name, httpReq.Header)
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
@@ -320,7 +351,9 @@ func (p *OpenAICompatProvider) FetchModels() ([]string, error) {
 	}
 	defer resp.Body.Close()
 
-	log.Printf("[%s] FetchModels response status: %s", p.name, resp.Status)
+	if isDebug() {
+		log.Printf("[%s] FetchModels response status: %s", p.name, resp.Status)
+	}
 
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("API returned status: %s", resp.Status)
