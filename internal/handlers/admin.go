@@ -934,22 +934,6 @@ var adminTemplates = []byte(`
             </div>
         </div>
         
-        <!-- Mini Charts Row -->
-        <div id="miniChartsRow" class="grid grid-cols-3 gap-3 mb-6">
-            <div class="bg-gray-800 rounded-xl p-3 border border-gray-700">
-                <p class="text-gray-400 text-xs mb-1">Input Tokens</p>
-                <canvas id="miniInputChart" height="40"></canvas>
-            </div>
-            <div class="bg-gray-800 rounded-xl p-3 border border-gray-700">
-                <p class="text-gray-400 text-xs mb-1">Output Tokens</p>
-                <canvas id="miniOutputChart" height="40"></canvas>
-            </div>
-            <div class="bg-gray-800 rounded-xl p-3 border border-gray-700">
-                <p class="text-gray-400 text-xs mb-1">Active Clients</p>
-                <canvas id="miniClientsChart" height="40"></canvas>
-            </div>
-        </div>
-        
         <!-- Recent Requests -->
         <div class="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
             <div class="px-6 py-4 border-b border-gray-700 flex justify-between items-center">
@@ -1106,81 +1090,9 @@ var adminTemplates = []byte(`
             };
         }
 
-        // Mini charts for last 5 minutes
-        var recentStatsRaw = {{toJson (index .Data "RecentStats")}};
-        var recentStats = Array.isArray(recentStatsRaw) ? recentStatsRaw : [];
-        
-            function initMiniCharts() {
-            var chartOptions = {
-                responsive: true,
-                plugins: { legend: { display: false } },
-                scales: {
-                    x: { grid: { color: '#374151' }, ticks: { color: '#9CA3AF' } },
-                    y: { grid: { color: '#374151' }, ticks: { color: '#9CA3AF' } }
-                }
-            };
-            
-            var miniChartsRow = document.getElementById('miniChartsRow');
-            if (!recentStats || recentStats.length === 0) {
-                if (miniChartsRow) miniChartsRow.style.display = 'none';
-                return;
-            }
-            
-            if (miniChartsRow) miniChartsRow.style.display = '';
-            
-            var labels = recentStats.map(function(d) {
-                // timestamp format: 2026-02-26T03:42
-                var parts = d.timestamp.split('T');
-                if (parts.length === 2) {
-                    return parts[1].substring(0, 5); // HH:MM
-                }
-                return d.timestamp;
-            });
-            
-            // Input Tokens mini chart
-            var ctxInput = document.getElementById('miniInputChart');
-            if (ctxInput) {
-                new Chart(ctxInput, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [{ label: 'Input', data: recentStats.map(function(d) { return d.input_tokens; }), borderColor: '#10B981', tension: 0.3, fill: true, backgroundColor: 'rgba(16,185,129,0.1)', pointRadius: 2 }]
-                    },
-                    options: chartOptions
-                });
-            }
-            
-            // Output Tokens mini chart
-            var ctxOutput = document.getElementById('miniOutputChart');
-            if (ctxOutput) {
-                new Chart(ctxOutput, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [{ label: 'Output', data: recentStats.map(function(d) { return d.output_tokens; }), borderColor: '#8B5CF6', tension: 0.3, fill: true, backgroundColor: 'rgba(139,92,246,0.1)', pointRadius: 2 }]
-                    },
-                    options: chartOptions
-                });
-            }
-            
-            // Clients mini chart
-            var ctxClients = document.getElementById('miniClientsChart');
-            if (ctxClients) {
-                new Chart(ctxClients, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [{ label: 'Clients', data: recentStats.map(function(d) { return d.unique_clients; }), borderColor: '#3B82F6', tension: 0.3, fill: true, backgroundColor: 'rgba(59,130,246,0.1)', pointRadius: 2 }]
-                    },
-                    options: chartOptions
-                });
-            }
-        }
-
         // Initialize chart with server-rendered data, then connect WS
         document.addEventListener('DOMContentLoaded', function() {
             initChart({{(index .Data "ModelUsage")}});
-            initMiniCharts();
             connectWS();
         });
     </script>
