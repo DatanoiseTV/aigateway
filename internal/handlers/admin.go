@@ -1630,7 +1630,7 @@ var adminTemplates = []byte(`
                     <div class="grid grid-cols-2 gap-4 mb-6">
                         <div>
                             <label class="block text-gray-400 text-sm font-medium mb-2">Backend Provider</label>
-                            <select name="backend" id="backendSelect" onchange="updateBackendFields()" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <select name="backend" id="backendSelect" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                                 {{range (index .Data "Providers")}}<option value="{{.}}" {{if eq . (index $.Data "Client").Backend}}selected{{end}}>{{.}}</option>{{end}}
                             </select>
                         </div>
