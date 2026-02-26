@@ -68,7 +68,7 @@ func (p *VLLMProvider) WithBaseURL(url string) Provider {
 }
 
 func (p *VLLMProvider) ChatCompletion(req *ChatRequest) ([]byte, int, error) {
-	url := p.cfg.BaseURL + "/v1/chat/completions"
+	url := p.cfg.BaseURL + "/chat/completions"
 
 	reqBody := map[string]interface{}{
 		"model":       req.Model,
@@ -98,7 +98,7 @@ func (p *VLLMProvider) ChatCompletion(req *ChatRequest) ([]byte, int, error) {
 }
 
 func (p *VLLMProvider) ChatCompletionStream(req *ChatRequest) (*http.Response, error) {
-	url := p.cfg.BaseURL + "/v1/chat/completions"
+	url := p.cfg.BaseURL + "/chat/completions"
 
 	reqBody := map[string]interface{}{
 		"model":       req.Model,
@@ -226,7 +226,7 @@ func (p *VLLMProvider) ParseStreamChunk(data []byte) (string, int, int) {
 }
 
 func (p *VLLMProvider) ListModels() ([]string, error) {
-	url := p.cfg.BaseURL + "/v1/models"
+	url := p.cfg.BaseURL + "/models"
 	log.Printf("[vllm ListModels] GET %s", url)
 
 	httpReq, err := http.NewRequest("GET", url, nil)
