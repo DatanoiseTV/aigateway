@@ -46,6 +46,9 @@ dist/
 # HN draft (never commit)
 HN.txt
 
+# TODO should be gitignored, ARCHITECTURE.md is committed
+TODO.md
+
 # Node modules (for building CSS)
 node_modules/
 package-lock.json
