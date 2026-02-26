@@ -355,6 +355,7 @@ func getString(m map[string]interface{}, key string) string {
 func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client *models.Client, req OpenAIChatRequest, provider providers.Provider, chatReq *providers.ChatRequest, requestBody string) {
 	start := time.Now()
 	maxToolIterations := 5
+	var toolNames []string
 
 	respBody, statusCode, err := provider.ChatCompletion(chatReq)
 	latencyMs := int(time.Since(start).Milliseconds())
@@ -446,6 +447,7 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 		// Execute each tool and add results to messages
 		for _, tc := range toolCalls {
 			log.Printf("[CHAT] Executing tool: %s with args: %s", tc.Name, tc.Arguments)
+			toolNames = append(toolNames, tc.Name)
 
 			// Add assistant's tool call message first
 			chatReq.Messages = append(chatReq.Messages, providers.ChatMessage{
@@ -498,7 +500,7 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 	}
 
 	responseText, inputTokens, outputTokens, _ := provider.ParseResponse(respBody)
-	h.geminiService.LogRequest(client.ID, chatReq.Model, statusCode, inputTokens, outputTokens, latencyMs, "", requestBody, chatReq.Stream, len(chatReq.Tools) > 0)
+	h.geminiService.LogRequest(client.ID, chatReq.Model, statusCode, inputTokens, outputTokens, latencyMs, "", requestBody, chatReq.Stream, len(chatReq.Tools) > 0, strings.Join(toolNames, ","))
 
 	if h.statsService != nil {
 		h.statsService.DecrementRequestsInProgress()
@@ -542,6 +544,7 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 // reads SSE chunks, and translates them to OpenAI-format SSE in real time.
 func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Request, client *models.Client, req OpenAIChatRequest, provider providers.Provider, chatReq *providers.ChatRequest, requestBody string) {
 	start := time.Now()
+	var toolNames []string
 
 	log.Printf("[CHAT] %s calling ChatCompletionStream with model: %s, ToolMode: %q", provider.Name(), chatReq.Model, client.ToolMode)
 
@@ -677,6 +680,7 @@ toolLoop:
 			// If finish_reason is tool_calls, execute the tool
 			if finishReason == "tool_calls" && hasToolCall {
 				log.Printf("[CHAT] %s streaming tool call detected: %s with args: %s", provider.Name(), toolCallName, toolCallArgs)
+				toolNames = append(toolNames, toolCallName)
 				break
 			}
 
@@ -827,7 +831,7 @@ toolLoop:
 	flusher.Flush()
 
 	// Log the request after streaming completes
-	h.geminiService.LogRequest(client.ID, chatReq.Model, resp.StatusCode, inputTokens, outputTokens, latencyMs, "", requestBody, chatReq.Stream, len(chatReq.Tools) > 0)
+	h.geminiService.LogRequest(client.ID, chatReq.Model, resp.StatusCode, inputTokens, outputTokens, latencyMs, "", requestBody, chatReq.Stream, len(chatReq.Tools) > 0, strings.Join(toolNames, ","))
 
 	if h.statsService != nil {
 		h.statsService.DecrementRequestsInProgress()

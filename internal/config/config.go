@@ -11,12 +11,13 @@ import (
 )
 
 type Config struct {
-	Server    ServerConfig              `yaml:"server"`
-	Admin     AdminConfig               `yaml:"admin"`
-	Providers map[string]ProviderConfig `yaml:"providers"`
-	Defaults  DefaultsConfig            `yaml:"defaults"`
-	Database  DatabaseConfig            `yaml:"database"`
-	Logging   LoggingConfig             `yaml:"logging"`
+	Server     ServerConfig              `yaml:"server"`
+	Admin      AdminConfig               `yaml:"admin"`
+	Providers  map[string]ProviderConfig `yaml:"providers"`
+	Defaults   DefaultsConfig            `yaml:"defaults"`
+	Database   DatabaseConfig            `yaml:"database"`
+	Logging    LoggingConfig             `yaml:"logging"`
+	Prometheus PrometheusConfig          `yaml:"prometheus"`
 
 	// Deprecated: kept for backward compat with existing config files.
 	// On load, this is migrated into Providers["gemini"].
@@ -86,6 +87,12 @@ type DatabaseConfig struct {
 type LoggingConfig struct {
 	Level string `yaml:"level"`
 	File  string `yaml:"file"`
+}
+
+type PrometheusConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }
 
 func (c *LoggingConfig) IsDebug() bool {
@@ -265,6 +272,17 @@ func ensureDefaults(cfg Config, path string) (Config, error) {
 	if cfg.Admin.SessionSecret == "" {
 		cfg.Admin.SessionSecret = generateRandomString(32)
 		changed = true
+	}
+
+	if cfg.Prometheus.Enabled && cfg.Prometheus.Username == "" {
+		cfg.Prometheus.Username = "prometheus"
+		cfg.Prometheus.Password = generateRandomString(20)
+		changed = true
+		fmt.Printf("\n===========================================\n")
+		fmt.Printf("  Prometheus credentials generated!\n")
+		fmt.Printf("  Username: %s\n", cfg.Prometheus.Username)
+		fmt.Printf("  Password: %s\n", cfg.Prometheus.Password)
+		fmt.Printf("===========================================\n\n")
 	}
 
 	if changed {

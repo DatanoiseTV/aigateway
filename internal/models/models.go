@@ -54,6 +54,7 @@ type RequestLog struct {
 	RequestBody  string    `gorm:"type:text" json:"request_body"`
 	IsStreaming  bool      `gorm:"default:false" json:"is_streaming"`
 	HasTools     bool      `gorm:"default:false" json:"has_tools"`
+	ToolNames    string    `gorm:"type:varchar(500)" json:"tool_names"`
 	CreatedAt    time.Time `gorm:"index" json:"created_at"`
 }
 

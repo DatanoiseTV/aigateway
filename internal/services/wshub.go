@@ -194,6 +194,7 @@ func (h *DashboardHub) buildPayload() []byte {
 			"created_at":    l.CreatedAt.Format("Jan 02, 2006 15:04"),
 			"is_streaming":  l.IsStreaming,
 			"has_tools":     l.HasTools,
+			"tool_names":    l.ToolNames,
 			"request_body":  l.RequestBody != "",
 		}
 	}

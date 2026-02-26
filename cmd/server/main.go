@@ -103,6 +103,13 @@ func main() {
 	}
 	adminHandler.RegisterRoutes(router)
 
+	// Prometheus metrics endpoint
+	if cfg.Prometheus.Enabled {
+		metricsHandler := handlers.NewMetricsHandler(statsService, cfg.Prometheus.Username, cfg.Prometheus.Password)
+		metricsHandler.RegisterRoutes(router)
+		log.Printf("Prometheus metrics enabled at /metrics (auth: %s)", cfg.Prometheus.Username)
+	}
+
 	router.Handle("/static/*", http.FileServer(http.FS(templates.Static)))
 
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {

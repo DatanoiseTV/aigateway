@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"ai-gateway/internal/config"
@@ -63,6 +64,7 @@ func NewAdminHandler(cfg *config.Config, clientService *services.ClientService, 
 		"formatInt":      formatInt,
 		"formatDuration": formatDuration,
 		"percentUsed":    percentUsed,
+		"splitToolNames": splitToolNames,
 		"add":            func(a, b int) int { return a + b },
 		"toJson":         func(v interface{}) (string, error) { b, err := json.Marshal(v); return string(b), err },
 	})
@@ -98,7 +100,6 @@ func (h *AdminHandler) RegisterRoutes(r *chi.Mux) {
 		r.Use(middleware.Timeout(60 * time.Second))
 		r.Use(h.RequireAuth)
 
-		r.Get("/admin", h.Dashboard)
 		r.Get("/admin/dashboard", h.Dashboard)
 		r.Get("/admin/clients", h.ListClients)
 		r.Post("/admin/clients", h.CreateClient)
@@ -716,6 +717,13 @@ func formatInt(n interface{}) string {
 	}
 }
 
+func splitToolNames(names string) []string {
+	if names == "" {
+		return nil
+	}
+	return strings.Split(names, ",")
+}
+
 func percentUsed(used, limit interface{}) int {
 	var usedVal, limitVal int64
 	switch v := used.(type) {
@@ -995,7 +1003,7 @@ var adminTemplates = []byte(`
                             <td class="px-6 py-4 whitespace-nowrap">
                                 <div class="flex flex-wrap gap-1">
                                     {{if .IsStreaming}}<span class="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full">stream</span>{{end}}
-                                    {{if .HasTools}}<span class="text-xs px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded-full">tools</span>{{end}}
+                                    {{if .HasTools}}{{range splitToolNames .ToolNames}}<span class="text-xs px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded-full">{{.}}</span>{{end}}{{end}}
                                     {{if .RequestBody}}<button onclick="showRequestBody('{{js .RequestBody}}')" class="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded-full hover:bg-blue-500/30">body</button>{{end}}
                                 </div>
                         </tr>
@@ -1093,7 +1101,12 @@ var adminTemplates = []byte(`
                 html += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">' + formatDuration(l.latency_ms) + '</td>';
                 html += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">';
                 if (l.is_streaming) html += '<span class="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full">stream</span> ';
-                if (l.has_tools) html += '<span class="text-xs px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded-full">tools</span> ';
+                if (l.has_tools && l.tool_names) {
+                    var toolNames = l.tool_names.split(',');
+                    toolNames.forEach(function(t) {
+                        html += '<span class="text-xs px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded-full">' + t + '</span> ';
+                    });
+                }
                 if (l.request_body) html += '<span class="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded-full">body</span> ';
                 html += '</td>';
                 html += '</tr>';
@@ -1484,49 +1497,27 @@ var adminTemplates = []byte(`
         </script>
         
         <!-- Stats Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
-                <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-gray-400 text-sm font-medium">Requests Today</h3>
-                    <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                    </svg>
-                </div>
-                <p id="client-requests" class="text-3xl font-bold text-white">{{(index .Data "Stats").RequestsToday}}</p>
-                <div class="mt-2 bg-gray-700 rounded-full h-2">
-                    <div class="bg-blue-500 h-2 rounded-full transition-all" style="width: {{percentUsed (index .Data "Stats").RequestsToday (index .Data "Stats").RequestsLimit}}%"></div>
-                </div>
-                <p class="text-gray-500 text-sm mt-1">{{(index .Data "Stats").RequestsLimit}} daily limit</p>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div class="bg-gray-800 rounded-xl p-4 border border-gray-700">
+                <p class="text-gray-400 text-xs font-medium">Requests Today</p>
+                <p class="text-2xl font-bold text-white mt-1">{{(index .Data "Stats").RequestsToday}}</p>
             </div>
-            
-            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
-                <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-gray-400 text-sm font-medium">Input Tokens</h3>
-                    <svg class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
-                    </svg>
-                </div>
-                <p id="client-input" class="text-3xl font-bold text-white">{{formatInt (index .Data "Stats").InputTokensToday}}</p>
-                <div class="mt-2 bg-gray-700 rounded-full h-2">
-                    <div class="bg-green-500 h-2 rounded-full transition-all" style="width: {{percentUsed (index .Data "Stats").InputTokensToday (index .Data "Stats").InputTokensLimit}}%"></div>
-                </div>
-                <p class="text-gray-500 text-sm mt-1">{{formatInt (index .Data "Stats").InputTokensLimit}} daily limit</p>
+            <div class="bg-gray-800 rounded-xl p-4 border border-gray-700">
+                <p class="text-gray-400 text-xs font-medium">Input Tokens</p>
+                <p class="text-2xl font-bold text-white mt-1">{{formatInt (index .Data "Stats").InputTokensToday}}</p>
             </div>
-            
-            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
-                <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-gray-400 text-sm font-medium">Output Tokens</h3>
-                    <svg class="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                    </svg>
-                </div>
-                <p id="client-output" class="text-3xl font-bold text-white">{{formatInt (index .Data "Stats").OutputTokensToday}}</p>
-                <div class="mt-2 bg-gray-700 rounded-full h-2">
-                    <div class="bg-purple-500 h-2 rounded-full transition-all" style="width: {{percentUsed (index .Data "Stats").OutputTokensToday (index .Data "Stats").OutputTokensLimit}}%"></div>
-                </div>
-                <p class="text-gray-500 text-sm mt-1">{{formatInt (index .Data "Stats").OutputTokensLimit}} daily limit</p>
+            <div class="bg-gray-800 rounded-xl p-4 border border-gray-700">
+                <p class="text-gray-400 text-xs font-medium">Output Tokens</p>
+                <p class="text-2xl font-bold text-white mt-1">{{formatInt (index .Data "Stats").OutputTokensToday}}</p>
+            </div>
+            <div class="bg-gray-800 rounded-xl p-4 border border-gray-700">
+                <p class="text-gray-400 text-xs font-medium">Error Rate</p>
+                <p class="text-2xl font-bold text-white mt-1">{{printf "%.1f" (index .Data "Stats").ErrorRate}}%</p>
             </div>
         </div>
+
+        <!-- Charts Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <!-- Settings Form -->

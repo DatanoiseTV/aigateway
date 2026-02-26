@@ -83,7 +83,7 @@ func (h *ProxyHandler) GenerateContent(w http.ResponseWriter, r *http.Request) {
 		errMsg = err.Error()
 	}
 
-	h.geminiService.LogRequest(client.ID, model, statusCode, inputTokens, outputTokens, latencyMs, errMsg, string(body), false, false)
+	h.geminiService.LogRequest(client.ID, model, statusCode, inputTokens, outputTokens, latencyMs, errMsg, string(body), false, false, "")
 
 	if h.statsService != nil {
 		h.statsService.DecrementRequestsInProgress()
