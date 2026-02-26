@@ -1,0 +1,117 @@
+basePath: /
+definitions:
+  handlers.OpenAIChatRequest:
+    properties:
+      max_tokens:
+        type: integer
+      messages:
+        items:
+          additionalProperties: true
+          type: object
+        type: array
+      model:
+        type: string
+      response_format: {}
+      stream:
+        type: boolean
+      stream_options:
+        $ref: '#/definitions/handlers.StreamOptions'
+      temperature:
+        type: number
+      tools:
+        items:
+          additionalProperties: true
+          type: object
+        type: array
+    type: object
+  handlers.OpenAIModel:
+    properties:
+      created:
+        type: integer
+      id:
+        type: string
+      object:
+        type: string
+      owned_by:
+        type: string
+      permission:
+        items: {}
+        type: array
+    type: object
+  handlers.OpenAIModelsResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/handlers.OpenAIModel'
+        type: array
+      object:
+        type: string
+    type: object
+  handlers.StreamOptions:
+    properties:
+      include_usage:
+        type: boolean
+    type: object
+host: localhost:8099
+info:
+  contact:
+    name: Support
+    url: https://github.com/DatanoiseTV/aigateway/issues
+  description: Self-hosted API gateway for LLM providers with rate limiting, quotas,
+    and analytics
+  license:
+    name: MIT
+    url: https://github.com/DatanoiseTV/aigateway/blob/main/LICENSE
+  termsOfService: https://github.com/DatanoiseTV/aigateway
+  title: AI Gateway API
+  version: "1.0"
+paths:
+  /chat/completions:
+    post:
+      consumes:
+      - application/json
+      description: Send a chat completion request to the configured LLM backend
+      parameters:
+      - description: Chat completion request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.OpenAIChatRequest'
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: Streaming chat response
+          schema:
+            type: string
+      security:
+      - ApiKeyAuth: []
+      summary: Chat Completions
+      tags:
+      - Chat
+  /v1/models:
+    get:
+      description: Get list of available models from the configured LLM backend
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of models
+          schema:
+            $ref: '#/definitions/handlers.OpenAIModelsResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: List available models
+      tags:
+      - Models
+schemes:
+- http
+- https
+securityDefinitions:
+  ApiKeyAuth:
+    description: 'API key authentication. Use format: "Bearer <client-api-key>"'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

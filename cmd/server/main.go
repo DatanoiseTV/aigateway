@@ -1,3 +1,20 @@
+// @title AI Gateway API
+// @version 1.0
+// @description Self-hosted API gateway for LLM providers with rate limiting, quotas, and analytics
+// @termsOfService https://github.com/DatanoiseTV/aigateway
+
+// @contact.name Support
+// @contact.url https://github.com/DatanoiseTV/aigateway/issues
+// @license.name MIT
+// @license.url https://github.com/DatanoiseTV/aigateway/blob/main/LICENSE
+
+// @host localhost:8099
+// @BasePath /
+// @schemes http https
+// @securityDefinitions.apikey ApiKeyAuth
+// @in header
+// @name Authorization
+// @description API key authentication. Use format: "Bearer <client-api-key>"
 package main
 
 import (
@@ -20,7 +37,9 @@ import (
 	"ai-gateway/internal/services"
 	"ai-gateway/internal/templates"
 
+	_ "ai-gateway/docs"
 	"github.com/go-chi/chi/v5"
+	"github.com/swaggo/http-swagger/v2"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
@@ -130,9 +149,10 @@ func main() {
 
 	router.Handle("/static/*", http.FileServer(http.FS(templates.Static)))
 
-	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("OK"))
-	})
+	// Swagger docs
+	router.Get("/swagger/*", httpSwagger.Handler(
+		httpSwagger.URL("/swagger/doc.json"),
+	))
 
 	serverPort := cfg.Server.Port
 	if *port > 0 {
