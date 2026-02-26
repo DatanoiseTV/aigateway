@@ -163,15 +163,13 @@ func (p *OpenAICompatProvider) ChatCompletionStream(req *ChatRequest) (*http.Res
 		url = p.cfg.BaseURL + "/chat/completions"
 	}
 
-	log.Printf("[%s] Stream request to %s: %s", p.name, url, string(body))
+	log.Printf("[%s] Stream request to %s", p.name, url)
 
 	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	p.setHeaders(httpReq)
-
-	log.Printf("[%s] Stream request headers: %v", p.name, httpReq.Header)
 
 	client := &http.Client{Timeout: time.Duration(p.cfg.TimeoutSeconds) * time.Second}
 	resp, err := client.Do(httpReq)
@@ -196,9 +194,27 @@ func (p *OpenAICompatProvider) buildRequestBody(req *ChatRequest, stream bool) [
 		model = p.cfg.DefaultModel
 	}
 
-	messages := make([]map[string]string, len(req.Messages))
+	messages := make([]map[string]interface{}, len(req.Messages))
 	for i, m := range req.Messages {
-		messages[i] = map[string]string{"role": m.Role, "content": m.Content}
+		msg := map[string]interface{}{"role": m.Role, "content": m.Content}
+		if m.Role == "tool" && m.ToolCallID != "" {
+			msg["tool_call_id"] = m.ToolCallID
+		}
+		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
+			toolCalls := make([]map[string]interface{}, len(m.ToolCalls))
+			for j, tc := range m.ToolCalls {
+				toolCalls[j] = map[string]interface{}{
+					"id":   tc.ID,
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":      tc.Name,
+						"arguments": tc.Arguments,
+					},
+				}
+			}
+			msg["tool_calls"] = toolCalls
+		}
+		messages[i] = msg
 	}
 
 	body := map[string]interface{}{
@@ -212,6 +228,13 @@ func (p *OpenAICompatProvider) buildRequestBody(req *ChatRequest, stream bool) [
 	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
+	}
+	if len(req.Tools) > 0 {
+		body["tools"] = req.Tools
+		log.Printf("[%s] Tools included in request: %d tools", p.name, len(req.Tools))
+	}
+	if req.ResponseFormat != nil {
+		body["response_format"] = req.ResponseFormat
 	}
 
 	data, _ := json.Marshal(body)
@@ -263,6 +286,7 @@ func (p *OpenAICompatProvider) ParseStreamChunk(data []byte) (string, int, int) 
 
 	inputTokens, outputTokens := 0, 0
 	if usage, ok := chunk["usage"].(map[string]interface{}); ok {
+		log.Printf("[%s] Stream usage chunk: %+v", p.name, usage)
 		if pt, ok := usage["prompt_tokens"].(float64); ok {
 			inputTokens = int(pt)
 		}
@@ -272,6 +296,66 @@ func (p *OpenAICompatProvider) ParseStreamChunk(data []byte) (string, int, int) 
 	}
 
 	return text, inputTokens, outputTokens
+}
+
+type StreamToolCall struct {
+	ID        string
+	Name      string
+	Arguments string
+	Index     int
+}
+
+func (p *OpenAICompatProvider) ParseStreamToolCall(data []byte) (interface{}, string) {
+	var chunk map[string]interface{}
+	if err := json.Unmarshal(data, &chunk); err != nil {
+		return nil, ""
+	}
+
+	choices, ok := chunk["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return nil, ""
+	}
+
+	choice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return nil, ""
+	}
+
+	finishReason, _ := choice["finish_reason"].(string)
+
+	delta, ok := choice["delta"].(map[string]interface{})
+	if !ok {
+		return nil, finishReason
+	}
+
+	toolCalls, ok := delta["tool_calls"].([]interface{})
+	if !ok || len(toolCalls) == 0 {
+		return nil, finishReason
+	}
+
+	tc, ok := toolCalls[0].(map[string]interface{})
+	if !ok {
+		return nil, finishReason
+	}
+
+	id, _ := tc["id"].(string)
+	indexFloat, _ := tc["index"].(float64)
+	index := int(indexFloat)
+
+	fn, ok := tc["function"].(map[string]interface{})
+	if !ok {
+		return nil, finishReason
+	}
+
+	name, _ := fn["name"].(string)
+	args, _ := fn["arguments"].(string)
+
+	return interface{}(&StreamToolCall{
+		ID:        id,
+		Name:      name,
+		Arguments: args,
+		Index:     index,
+	}), finishReason
 }
 
 func (p *OpenAICompatProvider) StreamDataPrefix() string { return "data: " }
@@ -399,4 +483,56 @@ func (p *OpenAICompatProvider) FetchModels() ([]string, error) {
 	}
 
 	return models, nil
+}
+
+func (p *OpenAICompatProvider) ParseToolCalls(body []byte) ([]ToolCall, error) {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+
+	choices, ok := resp["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return nil, nil
+	}
+
+	choice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return nil, nil
+	}
+
+	msg, ok := choice["message"].(map[string]interface{})
+	if !ok {
+		return nil, nil
+	}
+
+	toolCallsRaw, ok := msg["tool_calls"].([]interface{})
+	if !ok || len(toolCallsRaw) == 0 {
+		return nil, nil
+	}
+
+	var toolCalls []ToolCall
+	for _, tcRaw := range toolCallsRaw {
+		tc, ok := tcRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		id, _ := tc["id"].(string)
+		fn, _ := tc["function"].(map[string]interface{})
+		if fn == nil {
+			continue
+		}
+
+		name, _ := fn["name"].(string)
+		args, _ := fn["arguments"].(string)
+
+		toolCalls = append(toolCalls, ToolCall{
+			ID:        id,
+			Name:      name,
+			Arguments: args,
+		})
+	}
+
+	return toolCalls, nil
 }

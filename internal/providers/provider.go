@@ -43,22 +43,54 @@ type Provider interface {
 	// FetchModels fetches available models from the backend API.
 	// Returns nil if not supported or fetch fails.
 	FetchModels() ([]string, error)
+
+	// ParseToolCalls extracts tool calls from a non-streaming response body.
+	// Returns nil if no tool calls are present.
+	ParseToolCalls(body []byte) ([]ToolCall, error)
+
+	// ParseStreamToolCall extracts tool call and finish_reason from a streaming chunk.
+	// Returns (toolCall, finishReason). If no tool call in chunk, returns (nil, finishReason).
+	// The toolCall is provider-specific (e.g., *StreamToolCall for OpenAICompatProvider)
+	ParseStreamToolCall(data []byte) (interface{}, string)
 }
 
 // ChatMessage represents a single message in a conversation.
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 }
 
 // ChatRequest is the internal representation of a chat completion request
 // that gets translated into each provider's native format.
 type ChatRequest struct {
-	Model       string        `json:"model"`
-	Messages    []ChatMessage `json:"messages"`
-	MaxTokens   int           `json:"max_tokens,omitempty"`
-	Temperature float64       `json:"temperature,omitempty"`
-	Stream      bool          `json:"stream,omitempty"`
+	Model          string        `json:"model"`
+	Messages       []ChatMessage `json:"messages"`
+	MaxTokens      int           `json:"max_tokens,omitempty"`
+	Temperature    float64       `json:"temperature,omitempty"`
+	Stream         bool          `json:"stream,omitempty"`
+	Tools          []Tool        `json:"tools,omitempty"`
+	ResponseFormat any           `json:"response_format,omitempty"`
+}
+
+// Tool represents a function tool that the model can call.
+type Tool struct {
+	Type     string        `json:"type"`
+	Function *ToolFunction `json:"function,omitempty"`
+}
+
+type ToolFunction struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Parameters  any    `json:"parameters"`
+}
+
+// ToolCall represents a tool call requested by the model
+type ToolCall struct {
+	ID        string
+	Name      string
+	Arguments string
 }
 
 // Registry holds all configured provider instances, keyed by their config name.

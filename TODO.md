@@ -44,3 +44,4 @@
 - Add model list fetching for non-Gemini providers
 - Add request log filtering by backend provider
 - Dockerfile for container deployments
+- [x] Add structured output support via response_format (OpenAI, LM Studio, Gemini, Azure)

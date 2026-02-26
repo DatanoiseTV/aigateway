@@ -323,11 +323,11 @@ func (s *StatsService) GetClientStats2(days int) ([]ClientStats2, error) {
 }
 
 type MinuteStats struct {
-	Timestamp     time.Time `json:"timestamp"`
-	TotalRequests int       `json:"total_requests"`
-	InputTokens   int       `json:"input_tokens"`
-	OutputTokens  int       `json:"output_tokens"`
-	UniqueClients int       `json:"unique_clients"`
+	Timestamp     string `json:"timestamp"`
+	TotalRequests int    `json:"total_requests"`
+	InputTokens   int    `json:"input_tokens"`
+	OutputTokens  int    `json:"output_tokens"`
+	UniqueClients int    `json:"unique_clients"`
 }
 
 func (s *StatsService) GetRecentStats(minutes int) ([]MinuteStats, error) {
@@ -335,9 +335,9 @@ func (s *StatsService) GetRecentStats(minutes int) ([]MinuteStats, error) {
 
 	var results []MinuteStats
 	err := s.db.Model(&models.RequestLog{}).
-		Select("created_at as timestamp, COUNT(*) as total_requests, COALESCE(SUM(input_tokens), 0) as input_tokens, COALESCE(SUM(output_tokens), 0) as output_tokens, COUNT(DISTINCT client_id) as unique_clients").
+		Select("strftime('%Y-%m-%dT%H:%M', created_at) as timestamp, COUNT(*) as total_requests, COALESCE(SUM(input_tokens), 0) as input_tokens, COALESCE(SUM(output_tokens), 0) as output_tokens, COUNT(DISTINCT client_id) as unique_clients").
 		Where("created_at >= ?", startTime).
-		Group("DATE_TRUNC('minute', created_at)").
+		Group("strftime('%Y-%m-%dT%H:%M', created_at)").
 		Order("timestamp ASC").
 		Scan(&results).Error
 

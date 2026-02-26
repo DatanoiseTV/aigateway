@@ -112,6 +112,9 @@ func (p *AzureOpenAIProvider) buildRequestBody(req *ChatRequest, stream bool) []
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
 	}
+	if req.ResponseFormat != nil {
+		body["response_format"] = req.ResponseFormat
+	}
 
 	data, _ := json.Marshal(body)
 	return data
@@ -247,4 +250,60 @@ func (p *AzureOpenAIProvider) FetchModels() ([]string, error) {
 		models = append(models, m.ID)
 	}
 	return models, nil
+}
+
+func (p *AzureOpenAIProvider) ParseToolCalls(body []byte) ([]ToolCall, error) {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+
+	choices, ok := resp["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return nil, nil
+	}
+
+	choice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return nil, nil
+	}
+
+	msg, ok := choice["message"].(map[string]interface{})
+	if !ok {
+		return nil, nil
+	}
+
+	toolCallsRaw, ok := msg["tool_calls"].([]interface{})
+	if !ok || len(toolCallsRaw) == 0 {
+		return nil, nil
+	}
+
+	var toolCalls []ToolCall
+	for _, tcRaw := range toolCallsRaw {
+		tc, ok := tcRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		id, _ := tc["id"].(string)
+		fn, _ := tc["function"].(map[string]interface{})
+		if fn == nil {
+			continue
+		}
+
+		name, _ := fn["name"].(string)
+		args, _ := fn["arguments"].(string)
+
+		toolCalls = append(toolCalls, ToolCall{
+			ID:        id,
+			Name:      name,
+			Arguments: args,
+		})
+	}
+
+	return toolCalls, nil
+}
+
+func (p *AzureOpenAIProvider) ParseStreamToolCall(data []byte) (interface{}, string) {
+	return nil, ""
 }

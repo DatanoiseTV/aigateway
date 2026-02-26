@@ -11,6 +11,29 @@ import (
 	"ai-gateway/internal/config"
 )
 
+func convertResponseFormat(responseFormat any, genConfig map[string]interface{}) {
+	if responseFormat == nil {
+		return
+	}
+	rf, ok := responseFormat.(map[string]interface{})
+	if !ok {
+		return
+	}
+	rfType, _ := rf["type"].(string)
+	if rfType == "json_schema" {
+		js, _ := rf["json_schema"].(map[string]interface{})
+		if js != nil {
+			schema, _ := js["schema"].(map[string]interface{})
+			if schema != nil {
+				genConfig["responseMimeType"] = "application/json"
+				genConfig["responseSchema"] = schema
+			}
+		}
+	} else if rfType == "json_object" {
+		genConfig["responseMimeType"] = "application/json"
+	}
+}
+
 // GeminiProvider implements the Provider interface for Google's Gemini API.
 type GeminiProvider struct {
 	cfg config.ProviderConfig
@@ -104,12 +127,33 @@ func (p *GeminiProvider) buildRequestBody(req *ChatRequest) []byte {
 		geminiReq["systemInstruction"] = *systemInstruction
 	}
 
+	if len(req.Tools) > 0 {
+		tools := make([]map[string]interface{}, len(req.Tools))
+		for i, tool := range req.Tools {
+			if tool.Function != nil {
+				tools[i] = map[string]interface{}{
+					"functionDeclarations": []map[string]interface{}{
+						{
+							"name":        tool.Function.Name,
+							"description": tool.Function.Description,
+							"parameters":  tool.Function.Parameters,
+						},
+					},
+				}
+			}
+		}
+		geminiReq["tools"] = tools
+	}
+
 	genConfig := map[string]interface{}{}
 	if req.MaxTokens > 0 {
 		genConfig["maxOutputTokens"] = req.MaxTokens
 	}
 	if req.Temperature > 0 {
 		genConfig["temperature"] = req.Temperature
+	}
+	if req.ResponseFormat != nil {
+		convertResponseFormat(req.ResponseFormat, genConfig)
 	}
 	if len(genConfig) > 0 {
 		geminiReq["generationConfig"] = genConfig
@@ -238,4 +282,60 @@ func extractGeminiUsage(resp map[string]interface{}) (int, int) {
 		outputTokens = int(ct)
 	}
 	return inputTokens, outputTokens
+}
+
+func (p *GeminiProvider) ParseToolCalls(body []byte) ([]ToolCall, error) {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+
+	candidates, ok := resp["candidates"].([]interface{})
+	if !ok || len(candidates) == 0 {
+		return nil, nil
+	}
+
+	candidate, ok := candidates[0].(map[string]interface{})
+	if !ok {
+		return nil, nil
+	}
+
+	content, ok := candidate["content"].(map[string]interface{})
+	if !ok {
+		return nil, nil
+	}
+
+	parts, ok := content["parts"].([]interface{})
+	if !ok || len(parts) == 0 {
+		return nil, nil
+	}
+
+	var toolCalls []ToolCall
+	for _, partRaw := range parts {
+		part, ok := partRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		fnCall, ok := part["functionCall"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		name, _ := fnCall["name"].(string)
+		argsMap, _ := fnCall["args"].(map[string]interface{})
+		argsJSON, _ := json.Marshal(argsMap)
+
+		toolCalls = append(toolCalls, ToolCall{
+			ID:        "",
+			Name:      name,
+			Arguments: string(argsJSON),
+		})
+	}
+
+	return toolCalls, nil
+}
+
+func (p *GeminiProvider) ParseStreamToolCall(data []byte) (interface{}, string) {
+	return nil, ""
 }

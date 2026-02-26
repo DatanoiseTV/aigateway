@@ -80,13 +80,17 @@ func (p *AnthropicProvider) buildRequestBody(req *ChatRequest, stream bool) []by
 
 	// Anthropic separates system message from the messages array
 	var system string
-	messages := make([]map[string]string, 0)
+	messages := make([]map[string]interface{}, 0)
 	for _, m := range req.Messages {
 		if m.Role == "system" {
 			system = m.Content
 			continue
 		}
-		messages = append(messages, map[string]string{"role": m.Role, "content": m.Content})
+		msg := map[string]interface{}{"role": m.Role, "content": m.Content}
+		if m.Role == "tool" && m.ToolCallID != "" {
+			msg["tool_use_id"] = m.ToolCallID
+		}
+		messages = append(messages, msg)
 	}
 
 	body := map[string]interface{}{
@@ -103,6 +107,19 @@ func (p *AnthropicProvider) buildRequestBody(req *ChatRequest, stream bool) []by
 	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
+	}
+	if len(req.Tools) > 0 {
+		tools := make([]map[string]interface{}, len(req.Tools))
+		for i, tool := range req.Tools {
+			if tool.Function != nil {
+				tools[i] = map[string]interface{}{
+					"name":         tool.Function.Name,
+					"description":  tool.Function.Description,
+					"input_schema": tool.Function.Parameters,
+				}
+			}
+		}
+		body["tools"] = tools
 	}
 	if stream {
 		body["stream"] = true
@@ -212,4 +229,43 @@ func (p *AnthropicProvider) FetchModels() ([]string, error) {
 		"claude-3-sonnet-20240229",
 		"claude-3-haiku-20240307",
 	}, nil
+}
+
+func (p *AnthropicProvider) ParseToolCalls(body []byte) ([]ToolCall, error) {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+
+	content, ok := resp["content"].([]interface{})
+	if !ok || len(content) == 0 {
+		return nil, nil
+	}
+
+	var toolCalls []ToolCall
+	for _, blockRaw := range content {
+		block, ok := blockRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		if block["type"] == "tool_use" {
+			id, _ := block["id"].(string)
+			name, _ := block["name"].(string)
+			input, _ := block["input"].(map[string]interface{})
+			argsJSON, _ := json.Marshal(input)
+
+			toolCalls = append(toolCalls, ToolCall{
+				ID:        id,
+				Name:      name,
+				Arguments: string(argsJSON),
+			})
+		}
+	}
+
+	return toolCalls, nil
+}
+
+func (p *AnthropicProvider) ParseStreamToolCall(data []byte) (interface{}, string) {
+	return nil, ""
 }

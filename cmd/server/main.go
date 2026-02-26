@@ -62,6 +62,7 @@ func main() {
 	clientService := services.NewClientService(db)
 	geminiService := services.NewGeminiService(db, cfg)
 	statsService := services.NewStatsService(db)
+	toolService := services.NewToolService()
 
 	// Build the multi-backend provider registry from config
 	providerRegistry := providers.BuildRegistry(cfg)
@@ -78,7 +79,7 @@ func main() {
 	router.Use(middleware.MaxRequestSize(10 << 20))
 
 	proxyHandler := handlers.NewProxyHandler(geminiService)
-	openaiHandler := handlers.NewOpenAIHandler(geminiService, clientService, providerRegistry)
+	openaiHandler := handlers.NewOpenAIHandler(geminiService, clientService, providerRegistry, toolService)
 
 	rateLimiter := middleware.NewRateLimiter()
 	authMiddleware := middleware.NewAuthMiddleware(clientService)

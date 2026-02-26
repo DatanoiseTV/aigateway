@@ -25,10 +25,11 @@ type OpenAIHandler struct {
 	geminiService *services.GeminiService
 	clientService *services.ClientService
 	registry      *providers.Registry
+	toolService   *services.ToolService
 }
 
-func NewOpenAIHandler(geminiService *services.GeminiService, clientService *services.ClientService, registry *providers.Registry) *OpenAIHandler {
-	return &OpenAIHandler{geminiService: geminiService, clientService: clientService, registry: registry}
+func NewOpenAIHandler(geminiService *services.GeminiService, clientService *services.ClientService, registry *providers.Registry, toolService *services.ToolService) *OpenAIHandler {
+	return &OpenAIHandler{geminiService: geminiService, clientService: clientService, registry: registry, toolService: toolService}
 }
 
 func (h *OpenAIHandler) RegisterRoutes(r chi.Router) {
@@ -45,11 +46,13 @@ func (h *OpenAIHandler) RegisterRoutes(r chi.Router) {
 }
 
 type OpenAIChatRequest struct {
-	Model       string                   `json:"model"`
-	Messages    []map[string]interface{} `json:"messages"`
-	MaxTokens   int                      `json:"max_tokens,omitempty"`
-	Temperature float64                  `json:"temperature,omitempty"`
-	Stream      bool                     `json:"stream,omitempty"`
+	Model          string                   `json:"model"`
+	Messages       []map[string]interface{} `json:"messages"`
+	MaxTokens      int                      `json:"max_tokens,omitempty"`
+	Temperature    float64                  `json:"temperature,omitempty"`
+	Stream         bool                     `json:"stream,omitempty"`
+	Tools          []map[string]interface{} `json:"tools,omitempty"`
+	ResponseFormat any                      `json:"response_format,omitempty"`
 }
 
 type OpenAIChatResponse struct {
@@ -204,7 +207,14 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	log.Printf("[CHAT] Resolved model: %s, messages: %d", chatReq.Model, len(chatReq.Messages))
+	log.Printf("[CHAT] Resolved model: %s, messages: %d, tools: %d", chatReq.Model, len(chatReq.Messages), len(chatReq.Tools))
+	if len(chatReq.Tools) > 0 {
+		for _, t := range chatReq.Tools {
+			if t.Function != nil {
+				log.Printf("[CHAT] Tool available: %s - %s", t.Function.Name, t.Function.Description)
+			}
+		}
+	}
 
 	if req.Stream {
 		h.handleStreamingRequest(w, r, client, req, provider, chatReq)
@@ -246,18 +256,47 @@ func (h *OpenAIHandler) buildChatRequest(req OpenAIChatRequest, provider provide
 	}
 
 	return &providers.ChatRequest{
-		Model:       model,
-		Messages:    messages,
-		MaxTokens:   req.MaxTokens,
-		Temperature: req.Temperature,
-		Stream:      req.Stream,
+		Model:          model,
+		Messages:       messages,
+		MaxTokens:      req.MaxTokens,
+		Temperature:    req.Temperature,
+		Stream:         req.Stream,
+		Tools:          convertTools(req.Tools),
+		ResponseFormat: req.ResponseFormat,
 	}
+}
+
+func convertTools(tools []map[string]interface{}) []providers.Tool {
+	if tools == nil {
+		return nil
+	}
+	result := make([]providers.Tool, len(tools))
+	for i, t := range tools {
+		result[i] = providers.Tool{Type: "function"}
+		if fn, ok := t["function"].(map[string]interface{}); ok {
+			result[i].Function = &providers.ToolFunction{
+				Name:        getString(fn, "name"),
+				Description: getString(fn, "description"),
+				Parameters:  fn["parameters"],
+			}
+		}
+	}
+	return result
+}
+
+func getString(m map[string]interface{}, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
 }
 
 // handleNonStreamingRequest sends the request through the provider and returns
 // the full response as an OpenAI-compatible JSON response.
 func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client *models.Client, req OpenAIChatRequest, provider providers.Provider, chatReq *providers.ChatRequest) {
 	start := time.Now()
+	maxToolIterations := 5
+
 	respBody, statusCode, err := provider.ChatCompletion(chatReq)
 	latencyMs := int(time.Since(start).Milliseconds())
 
@@ -275,6 +314,80 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 		httpStatus := mapUpstreamStatusToHTTP(statusCode)
 		writeOpenAIError(w, httpStatus, errMsg, "api_error")
 		return
+	}
+
+	// Tool execution loop
+	for iteration := 0; iteration < maxToolIterations; iteration++ {
+		toolCalls, err := provider.ParseToolCalls(respBody)
+		if err != nil {
+			log.Printf("[CHAT] %s parse tool calls error: %v", provider.Name(), err)
+			break
+		}
+
+		if len(toolCalls) == 0 {
+			// Debug: log what the response looks like
+			preview := string(respBody)
+			if len(preview) > 500 {
+				preview = preview[:500] + "..."
+			}
+			log.Printf("[CHAT] %s no tool calls detected in iteration %d, response preview: %s", provider.Name(), iteration, preview)
+			break // No more tool calls, exit loop
+		}
+
+		log.Printf("[CHAT] %s tool calls detected: %d", provider.Name(), len(toolCalls))
+
+		// Execute each tool and add results to messages
+		for _, tc := range toolCalls {
+			log.Printf("[CHAT] Executing tool: %s with args: %s", tc.Name, tc.Arguments)
+
+			// Add assistant's tool call message first
+			chatReq.Messages = append(chatReq.Messages, providers.ChatMessage{
+				Role:      "assistant",
+				ToolCalls: []providers.ToolCall{tc},
+			})
+
+			var args map[string]interface{}
+			if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
+				log.Printf("[CHAT] Failed to parse tool args: %v", err)
+				args = map[string]interface{}{"raw": tc.Arguments}
+			}
+
+			result, err := h.toolService.Execute(tc.Name, args)
+			if err != nil {
+				log.Printf("[CHAT] Tool execution error: %v", err)
+				result = `{"error": "tool execution failed"}`
+			}
+
+			// Add tool result as a message
+			chatReq.Messages = append(chatReq.Messages, providers.ChatMessage{
+				Role:       "tool",
+				ToolCallID: tc.ID,
+				Content:    result,
+			})
+		}
+
+		// Remove tools from request for final response (let model provide answer)
+		chatReq.Tools = nil
+
+		// Re-query with tool results
+		start = time.Now()
+		respBody, statusCode, err = provider.ChatCompletion(chatReq)
+		latencyMs = int(time.Since(start).Milliseconds())
+
+		if err != nil {
+			log.Printf("[CHAT] %s tool loop request error: %v", provider.Name(), err)
+			writeOpenAIError(w, http.StatusBadGateway, "Upstream request failed: "+err.Error(), "api_error")
+			return
+		}
+
+		if statusCode >= 400 {
+			errMsg := extractErrorMessage(respBody)
+			log.Printf("[CHAT] %s tool loop error: %s", provider.Name(), errMsg)
+			writeOpenAIError(w, mapUpstreamStatusToHTTP(statusCode), errMsg, "api_error")
+			return
+		}
+
+		log.Printf("[CHAT] %s tool loop response status: %d, latency: %dms", provider.Name(), statusCode, latencyMs)
 	}
 
 	responseText, inputTokens, outputTokens, _ := provider.ParseResponse(respBody)
@@ -371,33 +484,156 @@ func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Re
 	var inputTokens, outputTokens int
 	chunkCount := 0
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		log.Printf("[CHAT] %s stream line: %q", provider.Name(), line)
+	maxToolIterations := 5
+toolLoop:
+	for iteration := 0; iteration < maxToolIterations; iteration++ {
+		var accumulatedText strings.Builder
+		var toolCallID, toolCallName, toolCallArgs string
+		var hasToolCall bool
+		var inToolCall bool
 
-		if !strings.HasPrefix(line, prefix) {
-			continue
+		for scanner.Scan() {
+			line := scanner.Text()
+
+			if !strings.HasPrefix(line, prefix) {
+				continue
+			}
+
+			jsonData := strings.TrimPrefix(line, prefix)
+			if jsonData == "" || jsonData == "[DONE]" {
+				continue
+			}
+
+			// Parse the chunk
+			var chunk map[string]interface{}
+			if err := json.Unmarshal([]byte(jsonData), &chunk); err != nil {
+				continue
+			}
+
+			// Get finish_reason
+			var finishReason string
+			if choices, ok := chunk["choices"].([]interface{}); ok && len(choices) > 0 {
+				if choice, ok := choices[0].(map[string]interface{}); ok {
+					finishReason, _ = choice["finish_reason"].(string)
+				}
+			}
+
+			// Check for tool call in delta
+			if choices, ok := chunk["choices"].([]interface{}); ok && len(choices) > 0 {
+				if choice, ok := choices[0].(map[string]interface{}); ok {
+					if delta, ok := choice["delta"].(map[string]interface{}); ok {
+						// Check for tool_calls in delta
+						if toolCalls, ok := delta["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
+							if tc, ok := toolCalls[0].(map[string]interface{}); ok {
+								hasToolCall = true
+								inToolCall = true
+
+								// Extract ID (only in first chunk)
+								if id, ok := tc["id"].(string); ok && id != "" {
+									toolCallID = id
+								}
+
+								// Extract function name (may be partial)
+								if fn, ok := tc["function"].(map[string]interface{}); ok {
+									if name, ok := fn["name"].(string); ok && name != "" {
+										toolCallName = name
+									}
+									if args, ok := fn["arguments"].(string); ok && args != "" {
+										toolCallArgs += args
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// Log finish reason for debugging
+			if finishReason != "" && finishReason != "null" && finishReason != "stop" {
+				log.Printf("[CHAT] %s chunk finish_reason: %s, toolCallName: %s, toolCallArgs: %s", provider.Name(), finishReason, toolCallName, toolCallArgs)
+			}
+
+			// If finish_reason is tool_calls, execute the tool
+			if finishReason == "tool_calls" && hasToolCall {
+				log.Printf("[CHAT] %s streaming tool call detected: %s with args: %s", provider.Name(), toolCallName, toolCallArgs)
+				break
+			}
+
+			// Regular text content
+			text, it, ot := provider.ParseStreamChunk([]byte(jsonData))
+			if it > 0 {
+				inputTokens = it
+			}
+			if ot > 0 {
+				outputTokens = ot
+			}
+
+			if text != "" && !inToolCall {
+				chunkCount++
+				accumulatedText.WriteString(text)
+				sendSSEChunk(w, flusher, responseID, req.Model, created, map[string]interface{}{"content": text}, nil)
+			}
 		}
 
-		jsonData := strings.TrimPrefix(line, prefix)
-		if jsonData == "" || jsonData == "[DONE]" {
-			log.Printf("[CHAT] %s stream got DONE or empty", provider.Name())
-			continue
+		// If no tool call detected in this iteration, we're done
+		if !hasToolCall {
+			break toolLoop
 		}
 
-		text, it, ot := provider.ParseStreamChunk([]byte(jsonData))
-		if it > 0 {
-			inputTokens = it
-		}
-		if ot > 0 {
-			outputTokens = ot
+		// Execute the tool
+		log.Printf("[CHAT] %s executing tool: %s with args: %s", provider.Name(), toolCallName, toolCallArgs)
+
+		// Add assistant's tool call message first
+		chatReq.Messages = append(chatReq.Messages, providers.ChatMessage{
+			Role: "assistant",
+			ToolCalls: []providers.ToolCall{{
+				ID:        toolCallID,
+				Name:      toolCallName,
+				Arguments: toolCallArgs,
+			}},
+		})
+
+		var args map[string]interface{}
+		if err := json.Unmarshal([]byte(toolCallArgs), &args); err != nil {
+			log.Printf("[CHAT] Failed to parse tool args: %v", err)
+			args = map[string]interface{}{"raw": toolCallArgs}
 		}
 
-		if text != "" {
-			chunkCount++
-			log.Printf("[CHAT] %s stream chunk %d: %q", provider.Name(), chunkCount, text)
-			sendSSEChunk(w, flusher, responseID, req.Model, created, map[string]interface{}{"content": text}, nil)
+		result, err := h.toolService.Execute(toolCallName, args)
+		if err != nil {
+			log.Printf("[CHAT] Tool execution error: %v", err)
+			result = `{"error": "tool execution failed"}`
 		}
+
+		// Add tool result as message
+		chatReq.Messages = append(chatReq.Messages, providers.ChatMessage{
+			Role:       "tool",
+			ToolCallID: toolCallID,
+			Content:    result,
+		})
+
+		log.Printf("[CHAT] %s tool result: %s", provider.Name(), result)
+
+		// Remove tools from request for final response
+		chatReq.Tools = nil
+
+		// Re-query with tool results - start new streaming request
+		log.Printf("[CHAT] %s re-querying with tool results (iteration %d)", provider.Name(), iteration+1)
+
+		resp.Body.Close()
+		resp, err = provider.ChatCompletionStream(chatReq)
+		if err != nil {
+			log.Printf("[CHAT] %s tool loop stream error: %v", provider.Name(), err)
+			break
+		}
+
+		scanner = bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
+
+		// Update response ID for new stream
+		responseID = "chatcmpl-" + randomID(12)
+		created = time.Now().Unix()
+		w.Header().Set("x-request-id", responseID)
 	}
 
 	latencyMs := int(time.Since(start).Milliseconds())
