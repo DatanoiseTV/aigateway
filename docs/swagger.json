@@ -1,0 +1,177 @@
+{
+    "schemes": [
+        "http",
+        "https"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "Self-hosted API gateway for LLM providers with rate limiting, quotas, and analytics",
+        "title": "AI Gateway API",
+        "termsOfService": "https://github.com/DatanoiseTV/aigateway",
+        "contact": {
+            "name": "Support",
+            "url": "https://github.com/DatanoiseTV/aigateway/issues"
+        },
+        "license": {
+            "name": "MIT",
+            "url": "https://github.com/DatanoiseTV/aigateway/blob/main/LICENSE"
+        },
+        "version": "1.0"
+    },
+    "host": "localhost:8099",
+    "basePath": "/",
+    "paths": {
+        "/chat/completions": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Send a chat completion request to the configured LLM backend",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "Chat"
+                ],
+                "summary": "Chat Completions",
+                "parameters": [
+                    {
+                        "description": "Chat completion request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.OpenAIChatRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Streaming chat response",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/models": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get list of available models from the configured LLM backend",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Models"
+                ],
+                "summary": "List available models",
+                "responses": {
+                    "200": {
+                        "description": "List of models",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.OpenAIModelsResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "handlers.OpenAIChatRequest": {
+            "type": "object",
+            "properties": {
+                "max_tokens": {
+                    "type": "integer"
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                },
+                "model": {
+                    "type": "string"
+                },
+                "response_format": {},
+                "stream": {
+                    "type": "boolean"
+                },
+                "stream_options": {
+                    "$ref": "#/definitions/handlers.StreamOptions"
+                },
+                "temperature": {
+                    "type": "number"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                }
+            }
+        },
+        "handlers.OpenAIModel": {
+            "type": "object",
+            "properties": {
+                "created": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "object": {
+                    "type": "string"
+                },
+                "owned_by": {
+                    "type": "string"
+                },
+                "permission": {
+                    "type": "array",
+                    "items": {}
+                }
+            }
+        },
+        "handlers.OpenAIModelsResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.OpenAIModel"
+                    }
+                },
+                "object": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.StreamOptions": {
+            "type": "object",
+            "properties": {
+                "include_usage": {
+                    "type": "boolean"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "ApiKeyAuth": {
+            "description": "API key authentication. Use format: \"Bearer \u003cclient-api-key\u003e\"",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
+}

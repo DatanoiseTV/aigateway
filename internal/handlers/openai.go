@@ -177,6 +177,17 @@ func (h *OpenAIHandler) updateClientModels(client *models.Client, provider provi
 	log.Printf("[%s] Updated models for client %s: %v", provider.Name(), client.Name, models)
 }
 
+// ChatCompletions godoc
+//
+//	@Summary		Chat Completions
+//	@Description	Send a chat completion request to the configured LLM backend
+//	@Tags			Chat
+//	@Accept			json
+//	@Produce		text/event-stream
+//	@Security		ApiKeyAuth
+//	@Param			request	body		OpenAIChatRequest	true	"Chat completion request"
+//	@Success		200		{string}	string				"Streaming chat response"
+//	@Router			/chat/completions [post]
 func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	client := middleware.GetClientFromContext(r.Context())
 	if client == nil {
@@ -1388,6 +1399,15 @@ func extractErrorMessage(body []byte) string {
 	return "Upstream API error"
 }
 
+// ListModels godoc
+//
+//	@Summary		List available models
+//	@Description	Get list of available models from the configured LLM backend
+//	@Tags			Models
+//	@Produce		json
+//	@Security		ApiKeyAuth
+//	@Success		200		{object}	OpenAIModelsResponse	"List of models"
+//	@Router			/v1/models [get]
 func (h *OpenAIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	client := middleware.GetClientFromContext(r.Context())
 
