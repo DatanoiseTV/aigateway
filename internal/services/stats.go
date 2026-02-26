@@ -84,6 +84,15 @@ func (s *StatsService) GetClientStats(clientID string) (*models.ClientStats, err
 	var usage models.DailyUsage
 	err := s.db.Where("client_id = ? AND date = ?", clientID, today).First(&usage).Error
 
+	// Get error rate from request logs
+	var totalRequests, errorRequests int64
+	s.db.Model(&models.RequestLog{}).Where("client_id = ? AND created_at >= ?", clientID, today).Count(&totalRequests)
+	s.db.Model(&models.RequestLog{}).Where("client_id = ? AND created_at >= ? AND status_code >= 400", clientID, today).Count(&errorRequests)
+	var errorRate float64
+	if totalRequests > 0 {
+		errorRate = float64(errorRequests) / float64(totalRequests) * 100
+	}
+
 	clientStats := &models.ClientStats{
 		ClientID:          client.ID,
 		ClientName:        client.Name,
@@ -95,6 +104,7 @@ func (s *StatsService) GetClientStats(clientID string) (*models.ClientStats, err
 		OutputTokensLimit: client.QuotaOutputTokensDay,
 		MaxInputTokens:    client.MaxInputTokens,
 		MaxOutputTokens:   client.MaxOutputTokens,
+		ErrorRate:         errorRate,
 	}
 
 	if err == nil {
@@ -119,6 +129,15 @@ func (s *StatsService) GetAllClientStats() ([]models.ClientStats, error) {
 		var usage models.DailyUsage
 		err := s.db.Where("client_id = ? AND date = ?", client.ID, today).First(&usage).Error
 
+		// Get error rate from request logs
+		var totalRequests, errorRequests int64
+		s.db.Model(&models.RequestLog{}).Where("client_id = ? AND created_at >= ?", client.ID, today).Count(&totalRequests)
+		s.db.Model(&models.RequestLog{}).Where("client_id = ? AND created_at >= ? AND status_code >= 400", client.ID, today).Count(&errorRequests)
+		var errorRate float64
+		if totalRequests > 0 {
+			errorRate = float64(errorRequests) / float64(totalRequests) * 100
+		}
+
 		stats := models.ClientStats{
 			ClientID:          client.ID,
 			ClientName:        client.Name,
@@ -128,6 +147,7 @@ func (s *StatsService) GetAllClientStats() ([]models.ClientStats, error) {
 			RequestsLimit:     client.QuotaRequestsDay,
 			InputTokensLimit:  client.QuotaInputTokensDay,
 			OutputTokensLimit: client.QuotaOutputTokensDay,
+			ErrorRate:         errorRate,
 		}
 
 		if err == nil {

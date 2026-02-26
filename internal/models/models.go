@@ -84,16 +84,17 @@ type Stats struct {
 }
 
 type ClientStats struct {
-	ClientID          string `json:"client_id"`
-	ClientName        string `json:"client_name"`
-	RequestsToday     int    `json:"requests_today"`
-	InputTokensToday  int    `json:"input_tokens_today"`
-	OutputTokensToday int    `json:"output_tokens_today"`
-	RequestsLimit     int    `json:"requests_limit"`
-	InputTokensLimit  int    `json:"input_tokens_limit"`
-	OutputTokensLimit int    `json:"output_tokens_limit"`
-	MaxInputTokens    int    `json:"max_input_tokens"`
-	MaxOutputTokens   int    `json:"max_output_tokens"`
+	ClientID          string  `json:"client_id"`
+	ClientName        string  `json:"client_name"`
+	RequestsToday     int     `json:"requests_today"`
+	InputTokensToday  int     `json:"input_tokens_today"`
+	OutputTokensToday int     `json:"output_tokens_today"`
+	RequestsLimit     int     `json:"requests_limit"`
+	InputTokensLimit  int     `json:"input_tokens_limit"`
+	OutputTokensLimit int     `json:"output_tokens_limit"`
+	MaxInputTokens    int     `json:"max_input_tokens"`
+	MaxOutputTokens   int     `json:"max_output_tokens"`
+	ErrorRate         float64 `json:"error_rate"`
 }
 
 type RateLimitInfo struct {

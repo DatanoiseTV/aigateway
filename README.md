@@ -181,6 +181,31 @@ The web UI at `/admin` provides:
 
 ---
 
+## Prometheus Metrics
+
+The gateway exposes Prometheus metrics at `/metrics` with HTTP Basic authentication:
+
+```yaml
+# config.yaml
+prometheus:
+  enabled: true
+  username: prometheus
+  password: your-secure-password
+```
+
+**Available metrics:**
+- `ai_gateway_requests_total` - Total requests by client/model/status
+- `ai_gateway_requests_in_progress` - Current in-flight requests
+- `ai_gateway_input_tokens_total` - Input tokens by client/model
+- `ai_gateway_output_tokens_total` - Output tokens by client/model
+- `ai_gateway_request_duration_seconds` - Request duration histogram
+- `ai_gateway_active_clients` - Number of active clients
+- `ai_gateway_upstream_errors_total` - Upstream errors by client/provider
+
+**Grafana Dashboard:** Import `contrib/grafana-dashboard.json` for a pre-built dashboard.
+
+---
+
 ## OpenCode Integration
 
 The gateway supports tool calling with [opencode](https://opencode.ai). Configure your `opencode.json`:
