@@ -2163,8 +2163,6 @@ var adminTemplates = []byte(`
                 '</div>';
             });
             modelUsageContainer.innerHTML = html;
-        } else {
-            modelUsageContainer.innerHTML = '<p class="text-gray-500 text-sm">No model data yet</p>';
         }
 
         // Historical 7 days chart

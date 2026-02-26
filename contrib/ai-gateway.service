@@ -1,0 +1,20 @@
+[Unit]
+Description=AI Gateway - OpenAI-compatible API gateway
+After=network.target
+
+[Service]
+Type=simple
+User=ai-gateway
+Group=ai-gateway
+WorkingDirectory=/opt/ai-gateway
+ExecStart=/opt/ai-gateway/ai-gateway -config /etc/ai-gateway/config.yaml
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+# Environment
+Environment=PORT=8090
+
+[Install]
+WantedBy=multi-user.target
