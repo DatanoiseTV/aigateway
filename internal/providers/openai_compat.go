@@ -9,10 +9,30 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"ai-gateway/internal/config"
 )
+
+var (
+	httpClient *http.Client
+	once       sync.Once
+)
+
+func getHTTPClient() *http.Client {
+	once.Do(func() {
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 100,
+				IdleConnTimeout:     90 * time.Second,
+			},
+			Timeout: 120 * time.Second,
+		}
+	})
+	return httpClient
+}
 
 // OpenAICompatProvider implements the Provider interface for any OpenAI-compatible API.
 // This covers OpenAI, Mistral, Ollama, LM Studio, and any other backend that
@@ -120,7 +140,8 @@ func (p *OpenAICompatProvider) ChatCompletion(req *ChatRequest) ([]byte, int, er
 	}
 	p.setHeaders(httpReq)
 
-	client := &http.Client{Timeout: time.Duration(p.cfg.TimeoutSeconds) * time.Second}
+	client := getHTTPClient()
+	client.Timeout = time.Duration(p.cfg.TimeoutSeconds) * time.Second
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to send request: %w", err)
@@ -171,7 +192,8 @@ func (p *OpenAICompatProvider) ChatCompletionStream(req *ChatRequest) (*http.Res
 	}
 	p.setHeaders(httpReq)
 
-	client := &http.Client{Timeout: time.Duration(p.cfg.TimeoutSeconds) * time.Second}
+	client := getHTTPClient()
+	client.Timeout = time.Duration(p.cfg.TimeoutSeconds) * time.Second
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)

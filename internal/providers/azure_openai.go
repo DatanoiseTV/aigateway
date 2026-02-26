@@ -53,7 +53,8 @@ func (p *AzureOpenAIProvider) ChatCompletion(req *ChatRequest) ([]byte, int, err
 	}
 	p.setHeaders(httpReq)
 
-	client := &http.Client{Timeout: time.Duration(p.cfg.TimeoutSeconds) * time.Second}
+	client := getHTTPClient()
+	client.Timeout = time.Duration(p.cfg.TimeoutSeconds) * time.Second
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to send request: %w", err)
@@ -83,7 +84,8 @@ func (p *AzureOpenAIProvider) ChatCompletionStream(req *ChatRequest) (*http.Resp
 	}
 	p.setHeaders(httpReq)
 
-	client := &http.Client{Timeout: time.Duration(p.cfg.TimeoutSeconds) * time.Second}
+	client := getHTTPClient()
+	client.Timeout = time.Duration(p.cfg.TimeoutSeconds) * time.Second
 	return client.Do(httpReq)
 }
 

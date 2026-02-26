@@ -63,7 +63,8 @@ func (p *GeminiProvider) ChatCompletion(req *ChatRequest) ([]byte, int, error) {
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: time.Duration(p.cfg.TimeoutSeconds) * time.Second}
+	client := getHTTPClient()
+	client.Timeout = time.Duration(p.cfg.TimeoutSeconds) * time.Second
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to send request: %w", err)
@@ -93,7 +94,8 @@ func (p *GeminiProvider) ChatCompletionStream(req *ChatRequest) (*http.Response,
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: time.Duration(p.cfg.TimeoutSeconds) * time.Second}
+	client := getHTTPClient()
+	client.Timeout = time.Duration(p.cfg.TimeoutSeconds) * time.Second
 	return client.Do(httpReq)
 }
 
