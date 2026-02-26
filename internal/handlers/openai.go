@@ -357,7 +357,7 @@ func (h *OpenAIHandler) buildChatRequest(req OpenAIChatRequest, provider provide
 		MaxTokens:      req.MaxTokens,
 		Temperature:    req.Temperature,
 		Stream:         req.Stream,
-		Tools:          convertTools(req.Tools),
+		Tools:          h.mergeTools(req.Tools, client.ServerTools),
 		ResponseFormat: req.ResponseFormat,
 		StreamOptions: func() *providers.StreamOptions {
 			if req.StreamOptions != nil {
@@ -384,6 +384,32 @@ func convertTools(tools []map[string]interface{}) []providers.Tool {
 		}
 	}
 	return result
+}
+
+func (h *OpenAIHandler) mergeTools(clientTools []map[string]interface{}, serverToolsEnabled bool) []providers.Tool {
+	var tools []providers.Tool
+
+	// Add client-provided tools first
+	if len(clientTools) > 0 {
+		tools = convertTools(clientTools)
+	}
+
+	// Add server tools if enabled
+	if serverToolsEnabled && h.toolService != nil {
+		serverToolDefs := h.toolService.GetOpenAITools()
+		for _, st := range serverToolDefs {
+			tools = append(tools, providers.Tool{
+				Type: "function",
+				Function: &providers.ToolFunction{
+					Name:        getString(st["function"].(map[string]interface{}), "name"),
+					Description: getString(st["function"].(map[string]interface{}), "description"),
+					Parameters:  st["function"].(map[string]interface{})["parameters"],
+				},
+			})
+		}
+	}
+
+	return tools
 }
 
 func getString(m map[string]interface{}, key string) string {

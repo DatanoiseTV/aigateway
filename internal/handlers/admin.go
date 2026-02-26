@@ -239,6 +239,7 @@ func (h *AdminHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 	systemPrompt := r.Form.Get("system_prompt")
 	toolMode := r.Form.Get("tool_mode")
 	fallbackModels := r.Form.Get("fallback_models")
+	serverTools := r.Form.Get("server_tools") == "on"
 
 	if name == "" {
 		http.Error(w, "Name is required", http.StatusBadRequest)
@@ -254,6 +255,7 @@ func (h *AdminHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 		client.SystemPrompt = systemPrompt
 		client.ToolMode = toolMode
 		client.FallbackModels = fallbackModels
+		client.ServerTools = serverTools
 		h.clientService.UpdateClient(client)
 	}
 	if err != nil {
@@ -309,6 +311,7 @@ func (h *AdminHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	systemPrompt := r.Form.Get("system_prompt")
 	toolMode := r.Form.Get("tool_mode")
 	fallbackModels := r.Form.Get("fallback_models")
+	serverTools := r.Form.Get("server_tools") == "on"
 	rateLimitMinute := parseInt(r.Form.Get("rate_limit_minute"), 60)
 	rateLimitHour := parseInt(r.Form.Get("rate_limit_hour"), 1000)
 	rateLimitDay := parseInt(r.Form.Get("rate_limit_day"), 10000)
@@ -335,6 +338,7 @@ func (h *AdminHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	client.SystemPrompt = systemPrompt
 	client.ToolMode = toolMode
 	client.FallbackModels = fallbackModels
+	client.ServerTools = serverTools
 	client.RateLimitMinute = rateLimitMinute
 	client.RateLimitHour = rateLimitHour
 	client.RateLimitDay = rateLimitDay
@@ -1379,6 +1383,10 @@ var adminTemplates = []byte(`
                                 <label class="block text-gray-500 text-xs my-2">System Prompt</label>
                                 <textarea name="system_prompt" rows="2" placeholder="Optional" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
                             </div>
+                            <div class="flex items-center">
+                                <input type="checkbox" name="server_tools" id="server_tools_create" class="w-4 h-4 rounded bg-gray-900 border-gray-600 text-blue-600 focus:ring-blue-500">
+                                <label for="server_tools_create" class="ml-2 text-gray-400 text-sm">Enable server tools (http_get, tcp_connect, etc.)</label>
+                            </div>
                         </div>
                     </details>
                 </div>
@@ -1617,6 +1625,13 @@ var adminTemplates = []byte(`
                         <label class="block text-gray-400 text-sm font-medium mb-2">Fallback Models</label>
                         <input type="text" name="fallback_models" placeholder="claude-3-haiku,claude-3-sonnet" value="{{(index .Data "Client").FallbackModels}}" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                         <p class="text-gray-500 text-xs mt-1">Comma-separated list of models to try if the primary model fails (rate limit, quota, server errors). Tried in order.</p>
+                    </div>
+                    <div class="mb-6">
+                        <label class="flex items-center text-gray-300">
+                            <input type="checkbox" name="server_tools" {{if (index .Data "Client").ServerTools}}checked{{end}} class="w-5 h-5 rounded bg-gray-900 border-gray-600 text-blue-600 focus:ring-blue-500">
+                            <span class="ml-2">Enable Server Tools</span>
+                        </label>
+                        <p class="text-gray-500 text-xs mt-1">Enable server-provided tools: http_get, tcp_connect, udp_connect, ssh_to_host, get_time, get_date, get_last_commits_from_url, ripgrep_style_grep, sed, send_http_request_json</p>
                     </div>
 
                     <!-- Model Whitelist -->
