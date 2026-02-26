@@ -1145,7 +1145,7 @@ var adminTemplates = []byte(`
 
         // Initialize chart with server-rendered data, then connect WS
         document.addEventListener('DOMContentLoaded', function() {
-            initChart({{(index .Data "ModelUsage")}});
+            initChart({{toJson (index .Data "ModelUsage")}});
             connectWS();
         });
     </script>
@@ -1701,9 +1701,9 @@ var adminTemplates = []byte(`
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Time</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Model</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Status</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Latency</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Input</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Output</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Runtime</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">In / Out</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Flags</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Error</th>
                         </tr>
                     </thead>
@@ -1718,8 +1718,14 @@ var adminTemplates = []byte(`
                                 </span>
                             </td>
                             <td class="px-6 py-4 text-sm text-gray-400">{{formatDuration .LatencyMs}}</td>
-                            <td class="px-6 py-4 text-sm text-gray-400">{{.InputTokens}}</td>
-                            <td class="px-6 py-4 text-sm text-gray-400">{{.OutputTokens}}</td>
+                            <td class="px-6 py-4 text-sm text-gray-400">{{.InputTokens}} / {{.OutputTokens}}</td>
+                            <td class="px-6 py-4">
+                                <div class="flex items-center gap-1">
+                                    {{if .IsStreaming}}<span class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded">stream</span>{{end}}
+                                    {{if .HasTools}}<span class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 bg-orange-500/20 text-orange-400 rounded">tools</span>{{end}}
+                                    {{if .RequestBody}}<span class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded">body</span>{{end}}
+                                </div>
+                            </td>
                             <td class="px-6 py-4 text-sm text-red-400 max-w-xs truncate">{{.ErrorMessage}}</td>
                         </tr>
                         {{else}}
@@ -2062,6 +2068,14 @@ var adminTemplates = []byte(`
             </div>
         </div>
 
+        <!-- Model Usage Bars -->
+        <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700 mb-8">
+            <h3 class="text-lg font-semibold text-white mb-4">Model Usage (7 days)</h3>
+            <div id="modelUsageBars" class="space-y-2">
+                <p class="text-gray-500 text-sm">Loading...</p>
+            </div>
+        </div>
+
         <!-- Hourly Chart -->
         <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700 mb-8">
             <h3 class="text-lg font-semibold text-white mb-4">Last 24 Hours</h3>
@@ -2147,6 +2161,28 @@ var adminTemplates = []byte(`
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
+        // Model usage bars
+        var modelStats = {{toJson (index .Data "ModelStats")}};
+        var modelUsageContainer = document.getElementById('modelUsageBars');
+        if (modelStats && modelStats.length > 0) {
+            var total = modelStats.reduce(function(sum, m) { return sum + m.total_requests; }, 0);
+            var colors = ['#3B82F6','#10B981','#8B5CF6','#F59E0B','#EF4444','#EC4899','#06B6D4'];
+            var html = '';
+            modelStats.slice(0, 5).forEach(function(m, i) {
+                var pct = total > 0 ? Math.round(m.total_requests / total * 100) : 0;
+                html += '<div class="flex items-center gap-3">' +
+                    '<div class="w-32 text-xs text-gray-400 truncate font-mono" title="' + m.model + '">' + m.model + '</div>' +
+                    '<div class="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">' +
+                        '<div class="h-full rounded-full" style="width: ' + pct + '%; background-color: ' + colors[i % colors.length] + '"></div>' +
+                    '</div>' +
+                    '<div class="w-20 text-xs text-gray-300 text-right font-mono">' + m.total_requests + ' (' + pct + '%)</div>' +
+                '</div>';
+            });
+            modelUsageContainer.innerHTML = html;
+        } else {
+            modelUsageContainer.innerHTML = '<p class="text-gray-500 text-sm">No model data yet</p>';
+        }
+
         // Historical 7 days chart
         var histData = {{toJson (index .Data "Historical7")}};
         if (!Array.isArray(histData)) histData = [];
