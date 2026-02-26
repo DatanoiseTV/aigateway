@@ -167,7 +167,9 @@ func (h *DashboardHub) buildPayload() []byte {
 	modelUsage, err := h.statsService.GetModelUsage()
 	if err != nil {
 		log.Printf("[WS] Failed to get model usage: %v", err)
+		modelUsage = make(map[string]int)
 	}
+	log.Printf("[WS] Model usage: %v", modelUsage)
 
 	clientStats, _ := h.statsService.GetAllClientStats()
 	clientStatsMap := make(map[string]interface{})
