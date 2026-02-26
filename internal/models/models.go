@@ -51,6 +51,7 @@ type RequestLog struct {
 	OutputTokens int       `gorm:"default:0" json:"output_tokens"`
 	LatencyMs    int       `json:"latency_ms"`
 	ErrorMessage string    `gorm:"type:text" json:"error_message"`
+	RequestBody  string    `gorm:"type:text" json:"request_body"`
 	CreatedAt    time.Time `gorm:"index" json:"created_at"`
 }
 

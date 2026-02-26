@@ -932,46 +932,21 @@ var adminTemplates = []byte(`
                     <p class="text-gray-500 text-sm">Loading...</p>
                 </div>
             </div>
-            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
-                <h3 class="text-sm font-semibold text-white mb-3">Quick Stats</h3>
-                <div class="space-y-3">
-                    <div class="flex justify-between items-center">
-                        <span class="text-gray-400 text-sm">Total Requests</span>
-                        <span id="stat-requests" class="text-white font-mono">0</span>
-                    </div>
-                    <div class="flex justify-between items-center">
-                        <span class="text-gray-400 text-sm">Input Tokens</span>
-                        <span id="stat-input-tokens" class="text-white font-mono">0</span>
-                    </div>
-                    <div class="flex justify-between items-center">
-                        <span class="text-gray-400 text-sm">Output Tokens</span>
-                        <span id="stat-output-tokens" class="text-white font-mono">0</span>
-                    </div>
-                    <div class="flex justify-between items-center">
-                        <span class="text-gray-400 text-sm">Active Clients</span>
-                        <span id="stat-active-clients" class="text-white font-mono">0</span>
-                    </div>
-                </div>
-            </div>
         </div>
         
         <!-- Mini Charts Row -->
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
-                <p class="text-gray-400 text-xs mb-1">Requests Trend</p>
-                <canvas id="miniRequestsChart" height="50"></canvas>
+        <div id="miniChartsRow" class="grid grid-cols-3 gap-3 mb-6">
+            <div class="bg-gray-800 rounded-xl p-3 border border-gray-700">
+                <p class="text-gray-400 text-xs mb-1">Input Tokens</p>
+                <canvas id="miniInputChart" height="40"></canvas>
             </div>
-            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
-                <p class="text-gray-400 text-xs mb-1">Tokens Trend</p>
-                <canvas id="miniTokensChart" height="50"></canvas>
+            <div class="bg-gray-800 rounded-xl p-3 border border-gray-700">
+                <p class="text-gray-400 text-xs mb-1">Output Tokens</p>
+                <canvas id="miniOutputChart" height="40"></canvas>
             </div>
-            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
-                <p class="text-gray-400 text-xs mb-1">Latency Trend</p>
-                <canvas id="miniLatencyChart" height="50"></canvas>
-            </div>
-            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
-                <p class="text-gray-400 text-xs mb-1">Clients Trend</p>
-                <canvas id="miniClientsChart" height="50"></canvas>
+            <div class="bg-gray-800 rounded-xl p-3 border border-gray-700">
+                <p class="text-gray-400 text-xs mb-1">Active Clients</p>
+                <canvas id="miniClientsChart" height="40"></canvas>
             </div>
         </div>
         
@@ -990,7 +965,7 @@ var adminTemplates = []byte(`
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Model</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Tokens</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Latency</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Runtime</th>
                         </tr>
                     </thead>
                     <tbody id="recent-logs" class="divide-y divide-gray-700">
@@ -1006,6 +981,8 @@ var adminTemplates = []byte(`
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">{{.InputTokens}} / {{.OutputTokens}}</td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">{{.LatencyMs}}ms</td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                {{if .RequestBody}}<span class="text-xs px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded">body</span>{{end}}
                         </tr>
                         {{else}}
                         <tr>
@@ -1112,7 +1089,6 @@ var adminTemplates = []byte(`
         var recentStats = Array.isArray(recentStatsRaw) ? recentStatsRaw : [];
         
             function initMiniCharts() {
-            console.log('initMiniCharts called, recentStats:', recentStats);
             var chartOptions = {
                 responsive: true,
                 plugins: { legend: { display: false } },
@@ -1122,16 +1098,13 @@ var adminTemplates = []byte(`
                 }
             };
             
+            var miniChartsRow = document.getElementById('miniChartsRow');
             if (!recentStats || recentStats.length === 0) {
-                console.log('No recent stats, hiding miniChartsRow');
-                // Hide mini charts when no data
-                document.getElementById('miniChartsRow').style.display = 'none';
+                if (miniChartsRow) miniChartsRow.style.display = 'none';
                 return;
             }
             
-            console.log('Showing miniChartsRow with data');
-            // Show mini charts row
-            document.getElementById('miniChartsRow').style.display = '';
+            if (miniChartsRow) miniChartsRow.style.display = '';
             
             var labels = recentStats.map(function(d) {
                 // timestamp format: 2026-02-26T03:42
@@ -2120,7 +2093,7 @@ var adminTemplates = []byte(`
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Model</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Requests</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Tokens</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Avg Latency</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Avg Runtime</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Success Rate</th>
                         </tr>
                     </thead>
