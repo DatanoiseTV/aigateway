@@ -11,13 +11,14 @@ import (
 )
 
 type Config struct {
-	Server     ServerConfig              `yaml:"server"`
-	Admin      AdminConfig               `yaml:"admin"`
-	Providers  map[string]ProviderConfig `yaml:"providers"`
-	Defaults   DefaultsConfig            `yaml:"defaults"`
-	Database   DatabaseConfig            `yaml:"database"`
-	Logging    LoggingConfig             `yaml:"logging"`
-	Prometheus PrometheusConfig          `yaml:"prometheus"`
+	Server      ServerConfig              `yaml:"server"`
+	Admin       AdminConfig               `yaml:"admin"`
+	Providers   map[string]ProviderConfig `yaml:"providers"`
+	Defaults    DefaultsConfig            `yaml:"defaults"`
+	Database    DatabaseConfig            `yaml:"database"`
+	Logging     LoggingConfig             `yaml:"logging"`
+	Prometheus  PrometheusConfig          `yaml:"prometheus"`
+	ServerTools ServerToolsConfig         `yaml:"server_tools"`
 
 	// Deprecated: kept for backward compat with existing config files.
 	// On load, this is migrated into Providers["gemini"].
@@ -93,6 +94,11 @@ type PrometheusConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+}
+
+type ServerToolsConfig struct {
+	Enabled bool     `yaml:"enabled"`
+	Tools   []string `yaml:"tools"`
 }
 
 func (c *LoggingConfig) IsDebug() bool {

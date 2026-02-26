@@ -48,6 +48,7 @@ type AdminHandler struct {
 	statsService  *services.StatsService
 	geminiService *services.GeminiService
 	dashboardHub  *services.DashboardHub
+	toolService   *services.ToolService
 	templates     *template.Template
 }
 
@@ -58,7 +59,7 @@ type PageData struct {
 	CSRFToken string
 }
 
-func NewAdminHandler(cfg *config.Config, clientService *services.ClientService, statsService *services.StatsService, geminiService *services.GeminiService, dashboardHub *services.DashboardHub) (*AdminHandler, error) {
+func NewAdminHandler(cfg *config.Config, clientService *services.ClientService, statsService *services.StatsService, geminiService *services.GeminiService, dashboardHub *services.DashboardHub, toolService *services.ToolService) (*AdminHandler, error) {
 	tmpl := template.New("admin").Funcs(template.FuncMap{
 		"formatDate":     formatDate,
 		"formatInt":      formatInt,
@@ -82,6 +83,7 @@ func NewAdminHandler(cfg *config.Config, clientService *services.ClientService, 
 		statsService:  statsService,
 		geminiService: geminiService,
 		dashboardHub:  dashboardHub,
+		toolService:   toolService,
 		templates:     tmpl,
 	}, nil
 }
@@ -113,6 +115,8 @@ func (h *AdminHandler) RegisterRoutes(r *chi.Mux) {
 		r.Post("/admin/clients/{id}/update-models", h.UpdateClientModels)
 		r.Get("/admin/stats", h.ShowStats)
 		r.Get("/admin/stats/api", h.GetAPISTats)
+		r.Get("/admin/server-tools", h.ShowServerTools)
+		r.Post("/admin/server-tools", h.UpdateServerTools)
 		r.Get("/admin/ws", h.HandleDashboardWS)
 	})
 }
@@ -413,6 +417,52 @@ func (h *AdminHandler) RegenerateKey(w http.ResponseWriter, r *http.Request) {
 			"Regen":  true,
 		},
 	})
+}
+
+func (h *AdminHandler) ShowServerTools(w http.ResponseWriter, r *http.Request) {
+	allTools := h.toolService.GetToolDefinitions()
+
+	enabledTools := make(map[string]bool)
+	for _, name := range h.cfg.ServerTools.Tools {
+		enabledTools[name] = true
+	}
+
+	h.render(w, "server_tools.html", PageData{
+		Title: "Server Tools",
+		User:  h.cfg.Admin.Username,
+		Data: map[string]interface{}{
+			"Tools":        allTools,
+			"EnabledTools": enabledTools,
+		},
+	})
+}
+
+func (h *AdminHandler) UpdateServerTools(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+
+	enabledTools := r.Form["tool"]
+
+	h.cfg.ServerTools.Tools = enabledTools
+	h.cfg.ServerTools.Enabled = len(enabledTools) > 0
+
+	if err := config.SaveConfig(h.cfg, "config.yaml"); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Update tool service
+	for _, name := range h.toolService.ToolNames() {
+		enabled := false
+		for _, t := range enabledTools {
+			if t == name {
+				enabled = true
+				break
+			}
+		}
+		_ = enabled // The tool service will be rebuilt on restart
+	}
+
+	http.Redirect(w, r, "/admin/server-tools", http.StatusFound)
 }
 
 func (h *AdminHandler) ShowStats(w http.ResponseWriter, r *http.Request) {
@@ -861,6 +911,7 @@ var adminTemplates = []byte(`
                     <a href="/admin/dashboard" class="px-3 py-2 rounded-lg text-sm font-medium text-white bg-gray-700">Dashboard</a>
                     <a href="/admin/clients" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Clients</a>
                     <a href="/admin/stats" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Stats</a>
+                    <a href="/admin/server-tools" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Server Tools</a>
                     <a href="https://github.com/DatanoiseTV/aigateway" target="_blank" class="px-3 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-gray-700">
                         <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                             <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
@@ -1199,6 +1250,7 @@ var adminTemplates = []byte(`
                     <a href="/admin/dashboard" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Dashboard</a>
                     <a href="/admin/clients" class="px-3 py-2 rounded-lg text-sm font-medium text-white bg-gray-700">Clients</a>
                     <a href="/admin/stats" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Stats</a>
+                    <a href="/admin/server-tools" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Server Tools</a>
                     <a href="https://github.com/DatanoiseTV/aigateway" target="_blank" class="px-3 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-gray-700">
                         <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                             <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
@@ -2257,6 +2309,63 @@ var adminTemplates = []byte(`
         }
         });
     </script>
+</body>
+</html>
+{{end}}
+
+{{define "server_tools.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server Tools - AI Gateway</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="bg-gray-900 text-white">
+    {{template "sidebar" .}}
+
+    <div class="ml-64 p-8">
+        <div class="max-w-4xl">
+            <div class="flex justify-between items-center mb-8">
+                <h1 class="text-3xl font-bold">Server Tools</h1>
+            </div>
+
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <p class="text-gray-400 mb-6">Enable or disable server-provided tools. These tools are available to clients that have "Enable Server Tools" checked in their settings.</p>
+
+                <form method="POST" action="/admin/server-tools">
+                    <div class="space-y-4">
+                        {{range .Data.Tools}}
+                        <div class="flex items-center p-4 bg-gray-900 rounded-lg border border-gray-700">
+                            <input type="checkbox" 
+                                   name="tool" 
+                                   value="{{.Name}}" 
+                                   {{if index (index .Data "EnabledTools") .Name}}checked{{end}}
+                                   class="w-5 h-5 rounded bg-gray-800 border-gray-600 text-blue-600 focus:ring-blue-500">
+                            <div class="ml-4 flex-1">
+                                <h3 class="font-medium text-white">{{.Name}}</h3>
+                                <p class="text-sm text-gray-400">{{.Description}}</p>
+                            </div>
+                        </div>
+                        {{end}}
+                    </div>
+
+                    <div class="mt-6 flex justify-end">
+                        <button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors">
+                            Save Changes
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="mt-6 bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <h2 class="text-xl font-semibold mb-4">Restart Required</h2>
+                <p class="text-gray-400">After changing tool settings, restart the server for changes to take effect.</p>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
 {{end}}

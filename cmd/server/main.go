@@ -70,7 +70,7 @@ func main() {
 	clientService := services.NewClientService(db)
 	geminiService := services.NewGeminiService(db, cfg)
 	statsService := services.NewStatsService(db)
-	toolService := services.NewToolService()
+	toolService := services.NewToolService(cfg.ServerTools.Tools)
 
 	// Build the multi-backend provider registry from config
 	providerRegistry := providers.BuildRegistry(cfg)
@@ -100,7 +100,7 @@ func main() {
 		openaiHandler.RegisterRoutes(r)
 	})
 
-	adminHandler, err := handlers.NewAdminHandler(cfg, clientService, statsService, geminiService, dashboardHub)
+	adminHandler, err := handlers.NewAdminHandler(cfg, clientService, statsService, geminiService, dashboardHub, toolService)
 	if err != nil {
 		log.Fatalf("Failed to initialize admin handler: %v", err)
 	}
