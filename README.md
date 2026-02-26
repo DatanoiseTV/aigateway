@@ -158,6 +158,7 @@ Each client (API key) has independent configuration:
 | **Default Model** | Model to use when none specified |
 | **Model Whitelist** | Restrict which models this client can access |
 | **System Prompt** | Injected as a system message on every request |
+| **Tool Mode** | Pass-through (forward tool_calls to client) or Gateway (execute internally) |
 | **Base URL Override** | Point at a specific Ollama/LM Studio instance |
 | **Rate Limits** | Per-minute, per-hour, per-day request caps |
 | **Token Quotas** | Daily input/output token budgets |
@@ -177,6 +178,32 @@ The web UI at `/admin` provides:
 - **Fetch Models** -- auto-discover available models from backend (Ollama, LM Studio, etc.)
 - **Model Whitelist UI** -- select which models each client can use
 - **Request history** -- per-client and global request logs with status, latency, and token counts
+
+---
+
+## OpenCode Integration
+
+The gateway supports tool calling with [opencode](https://opencode.ai). Configure your `opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "myprovider": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://127.0.0.1:8099",
+        "apiKey": "gm_..."
+      },
+      "models": {
+        "my-model": {}
+      }
+    }
+  }
+}
+```
+
+**Tool Mode:** The gateway defaults to "pass-through" mode, which forwards tool_calls to opencode for execution. This allows opencode to execute tools (bash, read, write, edit, glob, grep, etc.) locally. Set to "Gateway" in the admin UI if you want the gateway to handle tools (requires implementing tool functions).
 
 ---
 
