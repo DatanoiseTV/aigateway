@@ -39,6 +39,10 @@ type Provider interface {
 
 	// TestConnection verifies the provider's API is reachable.
 	TestConnection() (message string, ok bool, err error)
+
+	// FetchModels fetches available models from the backend API.
+	// Returns nil if not supported or fetch fails.
+	FetchModels() ([]string, error)
 }
 
 // ChatMessage represents a single message in a conversation.
@@ -118,34 +122,47 @@ func BuildRegistry(cfg *config.Config) *Registry {
 	reg := NewRegistry()
 
 	for name, pcfg := range cfg.Providers {
-		var p Provider
-		switch pcfg.Type {
-		case "gemini":
-			p = NewGeminiProvider(pcfg)
-		case "openai":
-			p = NewOpenAIProvider(name, pcfg)
-		case "anthropic":
-			p = NewAnthropicProvider(pcfg)
-		case "mistral":
-			p = NewMistralProvider(pcfg)
-		case "ollama":
-			p = NewOllamaProvider(name, pcfg)
-		case "lmstudio":
-			p = NewLMStudioProvider(name, pcfg)
-		case "perplexity":
-			p = NewPerplexityProvider(pcfg)
-		case "xai":
-			p = NewXAIProvider(pcfg)
-		case "cohere":
-			p = NewCohereProvider(pcfg)
-		case "azure-openai":
-			p = NewAzureOpenAIProvider(pcfg)
-		default:
-			// Treat unknown types as OpenAI-compatible
-			p = NewOpenAIProvider(name, pcfg)
-		}
+		p := buildProvider(name, pcfg)
 		reg.Register(name, p)
 	}
 
 	return reg
+}
+
+// BuildSingleProvider creates a provider instance from a single ProviderConfig.
+// Used for per-client provider instances when the client has their own API key.
+func BuildSingleProvider(name string, pcfg config.ProviderConfig) (Provider, error) {
+	p := buildProvider(name, pcfg)
+	if p == nil {
+		return nil, fmt.Errorf("unknown provider type: %s", pcfg.Type)
+	}
+	return p, nil
+}
+
+func buildProvider(name string, pcfg config.ProviderConfig) Provider {
+	switch pcfg.Type {
+	case "gemini":
+		return NewGeminiProvider(pcfg)
+	case "openai":
+		return NewOpenAIProvider(name, pcfg)
+	case "anthropic":
+		return NewAnthropicProvider(pcfg)
+	case "mistral":
+		return NewMistralProvider(pcfg)
+	case "ollama":
+		return NewOllamaProvider(name, pcfg)
+	case "lmstudio":
+		return NewLMStudioProvider(name, pcfg)
+	case "perplexity":
+		return NewPerplexityProvider(pcfg)
+	case "xai":
+		return NewXAIProvider(pcfg)
+	case "cohere":
+		return NewCohereProvider(pcfg)
+	case "azure-openai":
+		return NewAzureOpenAIProvider(pcfg)
+	default:
+		// Treat unknown types as OpenAI-compatible
+		return NewOpenAIProvider(name, pcfg)
+	}
 }

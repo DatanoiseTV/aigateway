@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"log"
@@ -10,6 +11,7 @@ import (
 
 	"ai-gateway/internal/config"
 	"ai-gateway/internal/models"
+	"ai-gateway/internal/providers"
 	"ai-gateway/internal/services"
 
 	"github.com/go-chi/chi/v5"
@@ -22,6 +24,21 @@ var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin:     func(r *http.Request) bool { return true },
+}
+
+func KnownProviderTypes() []string {
+	return []string{
+		"gemini",
+		"openai",
+		"anthropic",
+		"mistral",
+		"perplexity",
+		"xai",
+		"cohere",
+		"azure-openai",
+		"ollama",
+		"lmstudio",
+	}
 }
 
 type AdminHandler struct {
@@ -46,6 +63,8 @@ func NewAdminHandler(cfg *config.Config, clientService *services.ClientService, 
 		"formatInt":      formatInt,
 		"formatDuration": formatDuration,
 		"percentUsed":    percentUsed,
+		"add":            func(a, b int) int { return a + b },
+		"toJson":         func(v interface{}) (string, error) { b, err := json.Marshal(v); return string(b), err },
 	})
 
 	tmpl, err := tmpl.Parse(string(adminTemplates))
@@ -85,13 +104,12 @@ func (h *AdminHandler) RegisterRoutes(r *chi.Mux) {
 		r.Post("/admin/clients/{id}/delete", h.DeleteClient)
 		r.Post("/admin/clients/{id}/regenerate", h.RegenerateKey)
 		r.Post("/admin/clients/{id}/toggle", h.ToggleClient)
-		r.Get("/admin/settings", h.ShowSettings)
-		r.Post("/admin/settings", h.UpdateSettings)
+		r.Get("/admin/clients/{id}/test", h.TestClientConnection)
+		r.Get("/admin/clients/{id}/fetch-models", h.FetchClientModels)
+		r.Post("/admin/clients/{id}/update-models", h.UpdateClientModels)
+		r.Get("/admin/stats", h.ShowStats)
 		r.Get("/admin/stats/api", h.GetAPISTats)
 		r.Get("/admin/ws", h.HandleDashboardWS)
-		r.Get("/admin/api/test-connection", h.TestConnection)
-		r.Get("/admin/api/models", h.GetModels)
-		r.Get("/admin/api/fetch-models", h.FetchModels)
 	})
 }
 
@@ -165,16 +183,13 @@ func (h *AdminHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	recentLogs, _ := h.statsService.GetRecentRequests("", 20)
 	modelUsage, _ := h.statsService.GetModelUsage()
 
-	hasProviders := len(h.cfg.Providers) > 0
 	h.render(w, "dashboard.html", PageData{
 		Title: "Dashboard",
 		User:  h.cfg.Admin.Username,
 		Data: map[string]interface{}{
-			"Stats":        stats,
-			"RecentLogs":   recentLogs,
-			"ModelUsage":   modelUsage,
-			"HasProviders": hasProviders,
-			"Providers":    h.cfg.ProviderNames(),
+			"Stats":      stats,
+			"RecentLogs": recentLogs,
+			"ModelUsage": modelUsage,
 		},
 	})
 }
@@ -194,7 +209,7 @@ func (h *AdminHandler) ListClients(w http.ResponseWriter, r *http.Request) {
 		Data: map[string]interface{}{
 			"Clients":     clients,
 			"ClientStats": statsMap,
-			"Providers":   h.cfg.ProviderNames(),
+			"Providers":   KnownProviderTypes(),
 		},
 	})
 }
@@ -207,10 +222,14 @@ func (h *AdminHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 	if keyType == "" {
 		keyType = "gemini"
 	}
+	keyPrefix := r.Form.Get("key_prefix")
 	backend := r.Form.Get("backend")
 	if backend == "" {
 		backend = "gemini"
 	}
+	backendAPIKey := r.Form.Get("backend_api_key")
+	backendBaseURL := r.Form.Get("backend_base_url")
+	backendDefaultModel := r.Form.Get("backend_default_model")
 	systemPrompt := r.Form.Get("system_prompt")
 
 	if name == "" {
@@ -218,9 +237,12 @@ func (h *AdminHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, apiKey, err := h.clientService.CreateClient(name, description, keyType, h.cfg)
+	client, apiKey, err := h.clientService.CreateClient(name, description, keyType, keyPrefix, h.cfg)
 	if err == nil {
 		client.Backend = backend
+		client.BackendAPIKey = backendAPIKey
+		client.BackendBaseURL = backendBaseURL
+		client.BackendDefaultModel = backendDefaultModel
 		client.SystemPrompt = systemPrompt
 		h.clientService.UpdateClient(client)
 	}
@@ -258,7 +280,7 @@ func (h *AdminHandler) ShowClient(w http.ResponseWriter, r *http.Request) {
 			"Client":     client,
 			"Stats":      clientStats,
 			"RecentLogs": recentLogs,
-			"Providers":  h.cfg.ProviderNames(),
+			"Providers":  KnownProviderTypes(),
 		},
 	})
 }
@@ -271,7 +293,9 @@ func (h *AdminHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	description := r.Form.Get("description")
 	isActive := r.Form.Get("is_active") == "on"
 	backend := r.Form.Get("backend")
+	backendAPIKey := r.Form.Get("backend_api_key")
 	backendBaseURL := r.Form.Get("backend_base_url")
+	backendDefaultModel := r.Form.Get("backend_default_model")
 	systemPrompt := r.Form.Get("system_prompt")
 	rateLimitMinute := parseInt(r.Form.Get("rate_limit_minute"), 60)
 	rateLimitHour := parseInt(r.Form.Get("rate_limit_hour"), 1000)
@@ -281,6 +305,7 @@ func (h *AdminHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	quotaRequests := parseInt(r.Form.Get("quota_requests"), 1000)
 	maxInputTokens := parseInt(r.Form.Get("max_input_tokens"), 1000000)
 	maxOutputTokens := parseInt(r.Form.Get("max_output_tokens"), 8192)
+	modelsList := r.Form.Get("models_list")
 
 	client, err := h.clientService.GetClientByID(id)
 	if err != nil || client == nil {
@@ -292,7 +317,9 @@ func (h *AdminHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	client.Description = description
 	client.IsActive = isActive
 	client.Backend = backend
+	client.BackendAPIKey = backendAPIKey
 	client.BackendBaseURL = backendBaseURL
+	client.BackendDefaultModel = backendDefaultModel
 	client.SystemPrompt = systemPrompt
 	client.RateLimitMinute = rateLimitMinute
 	client.RateLimitHour = rateLimitHour
@@ -302,6 +329,9 @@ func (h *AdminHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	client.QuotaRequestsDay = quotaRequests
 	client.MaxInputTokens = maxInputTokens
 	client.MaxOutputTokens = maxOutputTokens
+	if modelsList != "" {
+		client.BackendModels = modelsList
+	}
 
 	err = h.clientService.UpdateClient(client)
 	if err != nil {
@@ -346,8 +376,9 @@ func (h *AdminHandler) RegenerateKey(w http.ResponseWriter, r *http.Request) {
 	if keyType == "" {
 		keyType = "gemini"
 	}
+	keyPrefix := r.Form.Get("key_prefix")
 
-	apiKey, err := h.clientService.RegenerateAPIKey(id, keyType)
+	apiKey, err := h.clientService.RegenerateAPIKey(id, keyType, keyPrefix)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -366,13 +397,35 @@ func (h *AdminHandler) RegenerateKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *AdminHandler) ShowStats(w http.ResponseWriter, r *http.Request) {
+	historical7, _ := h.statsService.GetHistoricalStats(7)
+	historical30, _ := h.statsService.GetHistoricalStats(30)
+	hourly24, _ := h.statsService.GetHourlyStats(24)
+	modelStats, _ := h.statsService.GetModelStats(7)
+	clientStats, _ := h.statsService.GetClientStats2(7)
+	stats, _ := h.statsService.GetGlobalStats()
+
+	h.render(w, "stats.html", PageData{
+		Title: "Statistics",
+		User:  h.cfg.Admin.Username,
+		Data: map[string]interface{}{
+			"Historical7":  historical7,
+			"Historical30": historical30,
+			"Hourly24":     hourly24,
+			"ModelStats":   modelStats,
+			"ClientStats":  clientStats,
+			"Stats":        stats,
+		},
+	})
+}
+
 func (h *AdminHandler) ShowSettings(w http.ResponseWriter, r *http.Request) {
 	h.render(w, "settings.html", PageData{
 		Title: "Settings",
 		User:  h.cfg.Admin.Username,
 		Data: map[string]interface{}{
 			"Config":    h.cfg,
-			"Providers": h.cfg.Providers,
+			"Providers": KnownProviderTypes(),
 		},
 	})
 }
@@ -421,7 +474,7 @@ func (h *AdminHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	config.Save(h.cfg)
 
-	http.Redirect(w, r, "/admin/settings?success=true", http.StatusFound)
+	http.Redirect(w, r, "/admin/clients", http.StatusFound)
 }
 
 func (h *AdminHandler) GetAPISTats(w http.ResponseWriter, r *http.Request) {
@@ -468,6 +521,114 @@ func (h *AdminHandler) FetchModels(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"success":true,"models":[%s]}`, formatStringArray(models))
+}
+
+func (h *AdminHandler) TestClientConnection(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	client, err := h.clientService.GetClientByID(id)
+	if err != nil || client == nil {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"success":false,"message":"Client not found"}`)
+		return
+	}
+
+	pcfg := config.ProviderConfig{
+		Type:           client.Backend,
+		APIKey:         client.BackendAPIKey,
+		BaseURL:        client.BackendBaseURL,
+		DefaultModel:   client.BackendDefaultModel,
+		TimeoutSeconds: 30,
+	}
+
+	provider, err := providers.BuildSingleProvider(client.Backend, pcfg)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"success":false,"message":"Failed to build provider: %s"}`, err.Error())
+		return
+	}
+
+	msg, ok, testErr := provider.TestConnection()
+	if testErr != nil {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"success":false,"message":"Error: %s"}`, testErr.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"success":%v,"message":"%s"}`, ok, msg)
+}
+
+func (h *AdminHandler) FetchClientModels(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	client, err := h.clientService.GetClientByID(id)
+	if err != nil || client == nil {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"success":false,"error":"Client not found"}`)
+		return
+	}
+
+	pcfg := config.ProviderConfig{
+		Type:           client.Backend,
+		APIKey:         client.BackendAPIKey,
+		BaseURL:        client.BackendBaseURL,
+		DefaultModel:   client.BackendDefaultModel,
+		TimeoutSeconds: 30,
+	}
+
+	provider, err := providers.BuildSingleProvider(client.Backend, pcfg)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"success":false,"error":"Failed to build provider: %s"}`, err.Error())
+		return
+	}
+
+	models, err := provider.FetchModels()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"success":false,"error":"%s"}`, err.Error())
+		return
+	}
+
+	client.BackendModels = formatModelArray(models)
+	h.clientService.UpdateClient(client)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"success":true,"models":[%s]}`, formatStringArray(models))
+}
+
+func (h *AdminHandler) UpdateClientModels(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	r.ParseForm()
+
+	models := r.Form["models"]
+
+	client, err := h.clientService.GetClientByID(id)
+	if err != nil || client == nil {
+		http.Error(w, "Client not found", http.StatusNotFound)
+		return
+	}
+
+	client.BackendModels = formatModelArray(models)
+	h.clientService.UpdateClient(client)
+
+	http.Redirect(w, r, "/admin/clients/"+id, http.StatusFound)
+}
+
+func formatModelArray(models []string) string {
+	if len(models) == 0 {
+		return "[]"
+	}
+	result := "["
+	for i, m := range models {
+		if i > 0 {
+			result += ","
+		}
+		result += fmt.Sprintf(`"%s"`, m)
+	}
+	result += "]"
+	return result
 }
 
 // HandleDashboardWS upgrades an HTTP connection to WebSocket for real-time dashboard updates.
@@ -576,11 +737,8 @@ var adminTemplates = []byte(`
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Login - AI Gateway</title>
     <link rel="stylesheet" href="/static/style.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Inter', sans-serif; }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
         .hidden { display: none; }
     </style>
     <script>
@@ -641,9 +799,9 @@ var adminTemplates = []byte(`
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Dashboard - AI Gateway</title>
     <link rel="stylesheet" href="/static/style.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>body { font-family: 'Inter', sans-serif; }</style>
+    <script src="/static/chart.js"></script>
+    <style>body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }</style>
+    <script>window.chartColors = ['#3B82F6','#10B981','#8B5CF6','#F59E0B','#EF4444','#EC4899','#06B6D4','#F97316','#84CC16','#E879F9'];</script>
 </head>
 <body class="bg-gray-900 min-h-screen">
     <!-- Top Navigation -->
@@ -662,7 +820,7 @@ var adminTemplates = []byte(`
                 <div class="flex items-center space-x-1">
                     <a href="/admin/dashboard" class="px-3 py-2 rounded-lg text-sm font-medium text-white bg-gray-700">Dashboard</a>
                     <a href="/admin/clients" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Clients</a>
-                    <a href="/admin/settings" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Settings</a>
+                    <a href="/admin/stats" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Stats</a>
                     <form method="POST" action="/admin/logout" class="ml-2">
                         <button type="submit" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -676,19 +834,6 @@ var adminTemplates = []byte(`
     </nav>
 
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <!-- Status Banner -->
-        {{if not (index .Data "HasProviders")}}
-        <div class="mb-6 bg-amber-500/10 border border-amber-500/50 rounded-xl p-4 flex items-center justify-between">
-            <div class="flex items-center space-x-3">
-                <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-                </svg>
-                <span class="text-amber-400 font-medium">No backend providers configured</span>
-            </div>
-            <a href="/admin/settings" class="text-sm text-amber-400 hover:text-amber-300 font-medium">Configure now →</a>
-        </div>
-        {{end}}
-
         <!-- Stats Grid -->
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
@@ -755,35 +900,7 @@ var adminTemplates = []byte(`
                 <canvas id="modelChart" height="200"></canvas>
             </div>
             
-            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
-                <h3 class="text-lg font-semibold text-white mb-4">System Status</h3>
-                <div class="space-y-4">
-                    <div class="flex items-center justify-between p-4 bg-gray-900/50 rounded-xl">
-                        <div class="flex items-center space-x-3">
-                            <div class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                            <span class="text-gray-300">Server Status</span>
-                        </div>
-                        <span class="text-green-400 font-medium">Online</span>
-                    </div>
-                    <div class="flex items-center justify-between p-4 bg-gray-900/50 rounded-xl">
-                        <div class="flex items-center space-x-3">
-                            <div class="w-3 h-3 {{if (index .Data "HasProviders")}}bg-green-500{{else}}bg-red-500{{end}} rounded-full"></div>
-                            <span class="text-gray-300">Backend Providers</span>
-                        </div>
-                        <span class="{{if (index .Data "HasProviders")}}text-green-400{{else}}text-red-400{{end}} font-medium">{{if (index .Data "HasProviders")}}{{len (index .Data "Providers")}} configured{{else}}None{{end}}</span>
-                    </div>
-                    <div class="flex items-center justify-between p-4 bg-gray-900/50 rounded-xl">
-                        <div class="flex items-center space-x-3">
-                            <div class="w-3 h-3 bg-green-500 rounded-full"></div>
-                            <span class="text-gray-300">Database</span>
-                        </div>
-                        <span class="text-green-400 font-medium">Connected</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Recent Requests -->
+            <!-- Recent Requests -->
         <div class="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
             <div class="px-6 py-4 border-b border-gray-700">
                 <h3 class="text-lg font-semibold text-white">Recent Requests</h3>
@@ -940,8 +1057,7 @@ var adminTemplates = []byte(`
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Clients - AI Gateway</title>
     <link rel="stylesheet" href="/static/style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>body { font-family: 'Inter', sans-serif; } .hidden { display: none; }</style>
+    <style>body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; } .hidden { display: none; }</style>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             window.showModal = function(id) { var el = document.getElementById(id); if(el) el.classList.remove('hidden'); };
@@ -964,7 +1080,7 @@ var adminTemplates = []byte(`
                 <div class="flex items-center space-x-1">
                     <a href="/admin/dashboard" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Dashboard</a>
                     <a href="/admin/clients" class="px-3 py-2 rounded-lg text-sm font-medium text-white bg-gray-700">Clients</a>
-                    <a href="/admin/settings" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Settings</a>
+                    <a href="/admin/stats" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Stats</a>
                     <form method="POST" action="/admin/logout" class="ml-2">
                         <button type="submit" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1081,46 +1197,75 @@ var adminTemplates = []byte(`
     </div>
     
     <!-- Create Modal -->
-    <div id="createModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-        <div class="bg-gray-800 border border-gray-700 rounded-2xl w-full max-w-md p-6">
-            <div class="flex justify-between items-center mb-6">
-                <h2 class="text-xl font-bold text-white">Create New Client</h2>
+    <div id="createModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm flex items-start justify-center z-50 p-4 overflow-y-auto">
+        <div class="bg-gray-800 border border-gray-700 rounded-2xl w-full max-w-md p-4 my-4">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-bold text-white">New Client</h2>
                 <button onclick="hideModal('createModal')" class="text-gray-400 hover:text-white">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                     </svg>
                 </button>
             </div>
             <form method="POST" action="/admin/clients">
-                <div class="mb-4">
-                    <label class="block text-gray-300 text-sm font-medium mb-2">Name</label>
-                    <input type="text" name="name" required placeholder="My App" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-gray-400 text-xs font-medium my-2">Name</label>
+                        <input type="text" name="name" required placeholder="My App" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-gray-400 text-xs font-medium my-2">API Key</label>
+                            <select name="key_type" onchange="toggleCustomPrefix(this)" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="gemini">gm_</option>
+                                <option value="openai">sk-</option>
+                                <option value="anthropic">sk-ant-</option>
+                                <option value="custom">Custom</option>
+                            </select>
+                        </div>
+                        <div id="customPrefixDiv" class="hidden">
+                            <label class="block text-gray-400 text-xs font-medium my-2">Prefix</label>
+                            <input type="text" name="key_prefix" placeholder="myapp_" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                    <script>function toggleCustomPrefix(el) { var div = document.getElementById('customPrefixDiv'); div.className = el.value === 'custom' ? '' : 'hidden'; }</script>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-gray-400 text-xs font-medium my-2">Backend</label>
+                            <select name="backend" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                {{range (index .Data "Providers")}}<option value="{{.}}" {{if eq . "gemini"}}selected{{end}}>{{.}}</option>{{end}}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 text-xs font-medium my-2">Model</label>
+                            <input type="text" name="backend_default_model" placeholder="optional" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-gray-400 text-xs font-medium my-2">API Key <span class="text-gray-500">(optional)</span></label>
+                        <input type="password" name="backend_api_key" placeholder="Per-client upstream key" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <details class="text-xs">
+                        <summary class="text-gray-400 cursor-pointer hover:text-white py-1">Advanced options</summary>
+                        <div class="space-y-2 pt-2">
+                            <div>
+                                <label class="block text-gray-500 text-xs my-2">Base URL</label>
+                                <input type="text" name="backend_base_url" placeholder="http://localhost:11434" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="block text-gray-500 text-xs my-2">Description</label>
+                                <textarea name="description" rows="1" placeholder="Optional" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                            </div>
+                            <div>
+                                <label class="block text-gray-500 text-xs my-2">System Prompt</label>
+                                <textarea name="system_prompt" rows="2" placeholder="Optional" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                            </div>
+                        </div>
+                    </details>
                 </div>
-                <div class="mb-4">
-                    <label class="block text-gray-300 text-sm font-medium mb-2">API Key Type</label>
-                    <select name="key_type" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="gemini">gm_ (Gemini style)</option>
-                        <option value="openai">sk- (OpenAI style)</option>
-                        <option value="anthropic">sk-ant- (Anthropic style)</option>
-                    </select>
-                </div>
-                <div class="mb-4">
-                    <label class="block text-gray-300 text-sm font-medium mb-2">Backend Provider</label>
-                    <select name="backend" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        {{range (index .Data "Providers")}}<option value="{{.}}">{{.}}</option>{{end}}
-                    </select>
-                </div>
-                <div class="mb-4">
-                    <label class="block text-gray-300 text-sm font-medium mb-2">Description</label>
-                    <textarea name="description" placeholder="Optional description" rows="2" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
-                </div>
-                <div class="mb-6">
-                    <label class="block text-gray-300 text-sm font-medium mb-2">System Prompt <span class="text-gray-500">(optional)</span></label>
-                    <textarea name="system_prompt" placeholder="Injected as system message on every request" rows="2" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
-                </div>
-                <div class="flex space-x-3">
-                    <button type="button" onclick="hideModal('createModal')" class="flex-1 px-4 py-3 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition-colors">Cancel</button>
-                    <button type="submit" class="flex-1 px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors">Create Client</button>
+                <div class="flex space-x-2 mt-4">
+                    <button type="button" onclick="hideModal('createModal')" class="flex-1 px-3 py-2 bg-gray-700 text-white text-sm rounded-lg hover:bg-gray-600">Cancel</button>
+                    <button type="submit" class="flex-1 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">Create</button>
                 </div>
             </form>
         </div>
@@ -1137,9 +1282,8 @@ var adminTemplates = []byte(`
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{.Title}} - AI Gateway</title>
     <link rel="stylesheet" href="/static/style.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>body { font-family: 'Inter', sans-serif; }</style>
+    <script src="/static/chart.js"></script>
+    <style>body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }</style>
 </head>
 <body class="bg-gray-900 min-h-screen">
     <nav class="bg-gray-800/80 backdrop-blur-md border-b border-gray-700 sticky top-0 z-50">
@@ -1164,7 +1308,7 @@ var adminTemplates = []byte(`
                 <div class="flex items-center space-x-1">
                     <a href="/admin/dashboard" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Dashboard</a>
                     <a href="/admin/clients" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Clients</a>
-                    <a href="/admin/settings" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Settings</a>
+                    <a href="/admin/stats" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Stats</a>
                     <form method="POST" action="/admin/logout" class="ml-2">
                         <button type="submit" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1275,21 +1419,57 @@ var adminTemplates = []byte(`
                     <div class="grid grid-cols-2 gap-4 mb-6">
                         <div>
                             <label class="block text-gray-400 text-sm font-medium mb-2">Backend Provider</label>
-                            <select name="backend" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <select name="backend" id="backendSelect" onchange="updateBackendFields()" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                                 {{range (index .Data "Providers")}}<option value="{{.}}" {{if eq . (index $.Data "Client").Backend}}selected{{end}}>{{.}}</option>{{end}}
                             </select>
                         </div>
                         <div>
-                            <label class="block text-gray-400 text-sm font-medium mb-2">Base URL Override</label>
-                            <input type="text" name="backend_base_url" value="{{(index .Data "Client").BackendBaseURL}}" placeholder="Leave empty for default" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <p class="text-gray-500 text-xs mt-1">For Ollama/LM Studio per-client URLs</p>
+                            <label class="block text-gray-400 text-sm font-medium mb-2">Default Model</label>
+                            <div class="flex space-x-2">
+                                <input type="text" name="backend_default_model" value="{{(index .Data "Client").BackendDefaultModel}}" placeholder="e.g. gemini-2.0-flash-lite-001" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <button type="button" onclick="fetchModels()" class="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm" title="Fetch available models from backend">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
+                    </div>
+                    <div class="mb-6">
+                        <label class="block text-gray-400 text-sm font-medium mb-2">Backend API Key</label>
+                        <input type="password" name="backend_api_key" value="{{(index .Data "Client").BackendAPIKey}}" placeholder="Leave empty to use global config" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <p class="text-gray-500 text-xs mt-1">Per-client API key. If empty, uses global provider config.</p>
+                    </div>
+                    <div class="mb-6">
+                        <label class="block text-gray-400 text-sm font-medium mb-2">Base URL Override</label>
+                        <div class="flex space-x-2">
+                            <input type="text" name="backend_base_url" value="{{(index .Data "Client").BackendBaseURL}}" placeholder="Leave empty for default" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <button type="button" onclick="testConnection()" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm flex items-center space-x-1" title="Test connection to backend">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                                </svg>
+                                <span>Test</span>
+                            </button>
+                        </div>
+                        <p class="text-gray-500 text-xs mt-1">For Ollama, LM Studio, Azure, or custom endpoints</p>
                     </div>
                     <div class="mb-6">
                         <label class="block text-gray-400 text-sm font-medium mb-2">System Prompt</label>
                         <textarea name="system_prompt" rows="3" placeholder="Injected as system message on every request from this client" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">{{(index .Data "Client").SystemPrompt}}</textarea>
                         <p class="text-gray-500 text-xs mt-1">Prepended before the user's messages. Leave empty to disable.</p>
                     </div>
+
+                    <!-- Model Whitelist -->
+                    <div class="mb-6">
+                        <label class="block text-gray-400 text-sm font-medium mb-2">Allowed Models (Whitelist)</label>
+                        <div id="modelsList" class="bg-gray-900 border border-gray-600 rounded-lg p-3 max-h-48 overflow-y-auto">
+                            <p class="text-gray-500 text-sm">Click "Fetch Models" to load available models from your backend, then select which models this client can use.</p>
+                        </div>
+                        <div id="selectedModels" class="mt-2 flex flex-wrap gap-2"></div>
+                        <input type="hidden" name="models_list" id="modelsInput">
+                        <p class="text-gray-500 text-xs mt-1">Leave empty to allow all models. Click "Fetch Models" button above to discover available models.</p>
+                    </div>
+
                     <div class="flex items-center justify-between">
                         <label class="flex items-center text-gray-300">
                             <input type="checkbox" name="is_active" {{if (index .Data "Client").IsActive}}checked{{end}} class="w-5 h-5 rounded bg-gray-900 border-gray-600 text-blue-600 focus:ring-blue-500">
@@ -1312,15 +1492,18 @@ var adminTemplates = []byte(`
                                 <p class="text-gray-500 text-sm">Invalidates the current key and generates a new one</p>
                             </div>
                             <form method="POST" action="/admin/clients/{{(index .Data "Client").ID}}/regenerate" class="flex items-center space-x-2">
-                                <select name="key_type" class="px-3 py-2 bg-gray-800 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                                <select name="key_type" onchange="toggleRegenPrefix(this)" class="px-3 py-2 bg-gray-800 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500">
                                     <option value="gemini">gm_</option>
                                     <option value="openai">sk-</option>
                                     <option value="anthropic">sk-ant-</option>
+                                    <option value="custom">Custom</option>
                                 </select>
+                                <input type="text" name="key_prefix" placeholder="prefix_" class="hidden px-2 py-2 bg-gray-800 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 w-24">
                                 <button type="submit" class="px-4 py-2 bg-yellow-600/20 text-yellow-400 border border-yellow-600/50 rounded-lg hover:bg-yellow-600/30 transition-colors">Regenerate</button>
                             </form>
                         </div>
                     </div>
+                    <script>function toggleRegenPrefix(el) { var input = el.nextElementSibling; input.className = el.value === 'custom' ? 'px-2 py-2 bg-gray-800 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 w-24' : 'hidden px-2 py-2 bg-gray-800 border border-gray-600 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 w-24'; }</script>
                     
                     <div class="p-4 bg-red-500/10 rounded-xl border border-red-500/30">
                         <div class="flex items-center justify-between">
@@ -1380,6 +1563,107 @@ var adminTemplates = []byte(`
             </div>
         </div>
     </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-4 right-4 px-6 py-3 rounded-lg text-white font-medium hidden transition-opacity duration-300"></div>
+
+    <script>
+        var clientID = "{{(index .Data "Client").ID}}";
+        var currentModels = {{(index .Data "Client").BackendModels}};
+
+        function showToast(message, isSuccess) {
+            var toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'fixed bottom-4 right-4 px-6 py-3 rounded-lg text-white font-medium transition-opacity duration-300 ' + (isSuccess ? 'bg-green-600' : 'bg-red-600');
+            toast.classList.remove('hidden');
+            setTimeout(function() {
+                toast.classList.add('hidden');
+            }, 3000);
+        }
+
+        function testConnection() {
+            var btn = event.target.closest('button');
+            btn.disabled = true;
+            btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+
+            fetch('/admin/clients/' + clientID + '/test')
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    showToast(data.message, data.success);
+                })
+                .catch(function(err) {
+                    showToast('Error: ' + err.message, false);
+                })
+                .finally(function() {
+                    btn.disabled = false;
+                    btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg><span class="ml-1">Test</span>';
+                });
+        }
+
+        function fetchModels() {
+            var btn = event.target.closest('button');
+            btn.disabled = true;
+            btn.innerHTML = '<svg class="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm291A7.962 7.2 5.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+
+            fetch('/admin/clients/' + clientID + '/fetch-models')
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    if (data.success) {
+                        showToast('Loaded ' + data.models.length + ' models', true);
+                        renderModelsList(data.models);
+                        currentModels = data.models;
+                    } else {
+                        showToast(data.error || 'Failed to fetch models', false);
+                    }
+                })
+                .catch(function(err) {
+                    showToast('Error: ' + err.message, false);
+                })
+                .finally(function() {
+                    btn.disabled = false;
+                    btn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>';
+                });
+        }
+
+        function renderModelsList(models) {
+            var container = document.getElementById('modelsList');
+            if (!models || models.length === 0) {
+                container.innerHTML = '<p class="text-gray-500 text-sm">No models found</p>';
+                return;
+            }
+            var selected = currentModels || [];
+            var html = '<div class="grid grid-cols-2 gap-2">';
+            models.forEach(function(m) {
+                var isChecked = selected.indexOf(m) !== -1 ? 'checked' : '';
+                html += '<label class="flex items-center space-x-2 cursor-pointer hover:bg-gray-800 p-1 rounded">';
+                html += '<input type="checkbox" value="' + m + '" ' + isChecked + ' onchange="updateSelectedModels()" class="rounded bg-gray-700 border-gray-600 text-blue-600">';
+                html += '<span class="text-gray-300 text-sm truncate">' + m + '</span>';
+                html += '</label>';
+            });
+            html += '</div>';
+            container.innerHTML = html;
+            updateSelectedModels();
+        }
+
+        function updateSelectedModels() {
+            var checkboxes = document.querySelectorAll('#modelsList input[type="checkbox"]:checked');
+            var selected = Array.from(checkboxes).map(function(cb) { return cb.value; });
+            document.getElementById('modelsInput').value = JSON.stringify(selected);
+            
+            var container = document.getElementById('selectedModels');
+            if (selected.length === 0) {
+                container.innerHTML = '<span class="text-gray-500 text-xs">All models allowed</span>';
+            } else {
+                container.innerHTML = selected.map(function(m) {
+                    return '<span class="px-2 py-1 bg-blue-600/20 text-blue-400 text-xs rounded-full">' + m + '</span>';
+                }).join('');
+            }
+        }
+
+        if (currentModels && currentModels.length > 0) {
+            renderModelsList(currentModels);
+        }
+    </script>
 </body>
 </html>
 {{end}}
@@ -1392,8 +1676,7 @@ var adminTemplates = []byte(`
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{.Title}} - AI Gateway</title>
     <link rel="stylesheet" href="/static/style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>body { font-family: 'Inter', sans-serif; }</style>
+    <style>body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }</style>
 </head>
 <body class="bg-gray-900 min-h-screen flex items-center justify-center p-4">
     <div class="w-full max-w-lg">
@@ -1451,72 +1734,7 @@ var adminTemplates = []byte(`
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Settings - AI Gateway</title>
     <link rel="stylesheet" href="/static/style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>body { font-family: 'Inter', sans-serif; } .hidden { display: none; }</style>
-    <script>
-        async function testConnection() {
-            const btn = document.getElementById('testBtn');
-            const result = document.getElementById('testResult');
-            btn.disabled = true;
-            btn.textContent = 'Testing...';
-            try {
-                const res = await fetch('/admin/api/test-connection');
-                const data = await res.json();
-                result.textContent = data.message;
-                result.className = data.success ? 'text-green-400 mt-2' : 'text-red-400 mt-2';
-                result.classList.remove('hidden');
-            } catch (e) {
-                result.textContent = 'Error: ' + e.message;
-                result.className = 'text-red-400 mt-2';
-                result.classList.remove('hidden');
-            }
-            btn.disabled = false;
-            btn.textContent = 'Test Connection';
-        }
-        
-        async function fetchModels() {
-            const btn = document.getElementById('fetchBtn');
-            const list = document.getElementById('modelList');
-            btn.disabled = true;
-            btn.textContent = 'Fetching...';
-            try {
-                const res = await fetch('/admin/api/fetch-models');
-                const data = await res.json();
-                if (data.success) {
-                    list.innerHTML = '';
-                    data.models.forEach(m => {
-                        const label = document.createElement('label');
-                        label.className = 'flex items-center space-x-2 text-gray-300 text-sm';
-                        const checkbox = document.createElement('input');
-                        checkbox.type = 'checkbox';
-                        checkbox.name = 'allowed_models';
-                        checkbox.value = m;
-                        checkbox.className = 'rounded bg-gray-900 border-gray-600 text-blue-600';
-                        const span = document.createElement('span');
-                        span.textContent = m;
-                        label.appendChild(checkbox);
-                        label.appendChild(span);
-                        list.appendChild(label);
-                    });
-                    document.getElementById('modelSection').classList.remove('hidden');
-                } else {
-                    alert('Error: ' + data.error);
-                }
-            } catch (e) {
-                alert('Error: ' + e.message);
-            }
-            btn.disabled = false;
-            btn.textContent = 'Fetch Available Models';
-        }
-
-        function selectAllModels() {
-            document.querySelectorAll('#modelList input[type="checkbox"]').forEach(cb => { cb.checked = true; });
-        }
-
-        function deselectAllModels() {
-            document.querySelectorAll('#modelList input[type="checkbox"]').forEach(cb => { cb.checked = false; });
-        }
-    </script>
+    <style>body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }</style>
 </head>
 <body class="bg-gray-900 min-h-screen">
     <nav class="bg-gray-800/80 backdrop-blur-md border-b border-gray-700 sticky top-0 z-50">
@@ -1533,7 +1751,7 @@ var adminTemplates = []byte(`
                 <div class="flex items-center space-x-1">
                     <a href="/admin/dashboard" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Dashboard</a>
                     <a href="/admin/clients" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Clients</a>
-                    <a href="/admin/settings" class="px-3 py-2 rounded-lg text-sm font-medium text-white bg-gray-700">Settings</a>
+                    <a href="/admin/stats" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Stats</a>
                     <form method="POST" action="/admin/logout" class="ml-2">
                         <button type="submit" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1547,165 +1765,277 @@ var adminTemplates = []byte(`
     </nav>
 
     <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {{if .Data.Config}}
-        <form method="POST" action="/admin/settings">
-            <!-- Providers -->
-            {{range $name, $provider := (index .Data "Providers")}}
-            <div class="bg-gray-800 rounded-2xl border border-gray-700 p-6 mb-6">
-                <h3 class="text-lg font-semibold text-white mb-6 flex items-center">
-                    <svg class="w-5 h-5 text-blue-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
-                    </svg>
-                    {{$name}} <span class="ml-2 px-2 py-0.5 text-xs font-medium bg-gray-700 text-gray-400 rounded-full">{{$provider.Type}}</span>
-                </h3>
-                
-                <div class="space-y-4">
-                    <div>
-                        <label class="block text-gray-300 text-sm font-medium mb-2">API Key</label>
-                        <input type="password" name="provider_{{$name}}_api_key" value="{{$provider.APIKey}}" placeholder="API key for {{$name}}"
-                            class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-gray-300 text-sm font-medium mb-2">Default Model</label>
-                            <input type="text" name="provider_{{$name}}_default_model" value="{{$provider.DefaultModel}}" placeholder="Default model"
-                                class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        </div>
-                        <div>
-                            <label class="block text-gray-300 text-sm font-medium mb-2">Base URL</label>
-                            <input type="text" name="provider_{{$name}}_base_url" value="{{$provider.BaseURL}}" placeholder="Default for type"
-                                class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        </div>
-                    </div>
-                    {{if eq $name "gemini"}}
-                    <div class="flex items-center space-x-4 pt-4">
-                        <button type="button" id="testBtn" onclick="testConnection()" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium">
-                            Test Connection
-                        </button>
-                        <button type="button" id="fetchBtn" onclick="fetchModels()" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium">
-                            Fetch Available Models
-                        </button>
-                    </div>
-                    <div id="testResult" class="hidden"></div>
-                    {{end}}
+        <div class="bg-amber-500/10 border border-amber-500/50 rounded-xl p-4 mb-6">
+            <div class="flex items-start space-x-3">
+                <svg class="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <div class="text-amber-400">
+                    <p class="font-medium text-sm">Provider Configuration Moved</p>
+                    <p class="text-amber-300/70 text-xs mt-1">API keys and provider settings are now configured per-client. Go to Clients to manage individual client credentials.</p>
                 </div>
             </div>
-            {{end}}
+        </div>
 
-            <!-- Add New Provider -->
-            <div class="bg-gray-800 rounded-2xl border border-dashed border-gray-600 p-6 mb-6">
-                <h3 class="text-lg font-semibold text-white mb-4 flex items-center">
-                    <svg class="w-5 h-5 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-                    </svg>
-                    Add Provider
-                </h3>
-                <div class="grid grid-cols-2 gap-4 mb-4">
-                    <div>
-                        <label class="block text-gray-300 text-sm font-medium mb-2">Name</label>
-                        <input type="text" name="new_provider_name" placeholder="e.g. my-ollama" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    </div>
-                    <div>
-                        <label class="block text-gray-300 text-sm font-medium mb-2">Type</label>
-                        <select name="new_provider_type" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <option value="">-- Select --</option>
-                            <option value="gemini">Gemini</option>
-                            <option value="openai">OpenAI</option>
-                            <option value="anthropic">Anthropic</option>
-                            <option value="mistral">Mistral</option>
-                            <option value="perplexity">Perplexity AI</option>
-                            <option value="xai">xAI / Grok</option>
-                            <option value="cohere">Cohere</option>
-                            <option value="azure-openai">Azure OpenAI</option>
-                            <option value="ollama">Ollama</option>
-                            <option value="lmstudio">LM Studio</option>
-                        </select>
-                    </div>
+        <!-- Server Info -->
+        <div class="bg-gray-800 rounded-2xl border border-gray-700 p-6 mb-6">
+            <h3 class="text-lg font-semibold text-white mb-6 flex items-center">
+                <svg class="w-5 h-5 text-purple-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>
+                </svg>
+                Server Information
+            </h3>
+            
+            <div class="grid grid-cols-2 gap-4">
+                <div class="bg-gray-900/50 rounded-xl p-4">
+                    <p class="text-gray-500 text-xs uppercase tracking-wide">Port</p>
+                    <p class="text-white font-medium">{{(index .Data "Config").Server.Port}}</p>
                 </div>
-                <div class="grid grid-cols-2 gap-4 mb-4">
-                    <div>
-                        <label class="block text-gray-300 text-sm font-medium mb-2">API Key</label>
-                        <input type="password" name="new_provider_api_key" placeholder="Optional" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    </div>
-                    <div>
-                        <label class="block text-gray-300 text-sm font-medium mb-2">Base URL</label>
-                        <input type="text" name="new_provider_base_url" placeholder="Default for type" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    </div>
+                <div class="bg-gray-900/50 rounded-xl p-4">
+                    <p class="text-gray-500 text-xs uppercase tracking-wide">Host</p>
+                    <p class="text-white font-medium">{{(index .Data "Config").Server.Host}}</p>
                 </div>
-                <div>
-                    <label class="block text-gray-300 text-sm font-medium mb-2">Default Model</label>
-                    <input type="text" name="new_provider_default_model" placeholder="e.g. llama3.2" class="w-full px-4 py-3 bg-gray-900 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <div class="bg-gray-900/50 rounded-xl p-4">
+                    <p class="text-gray-500 text-xs uppercase tracking-wide">Default Rate (min)</p>
+                    <p class="text-white font-medium">{{(index .Data "Config").Defaults.RateLimit.RequestsPerMinute}}</p>
+                </div>
+                <div class="bg-gray-900/50 rounded-xl p-4">
+                    <p class="text-gray-500 text-xs uppercase tracking-wide">Default Daily Quota</p>
+                    <p class="text-white font-medium">{{(index .Data "Config").Defaults.Quota.MaxRequestsPerDay}} requests</p>
                 </div>
             </div>
-
-            <!-- Gemini Allowed Models (if gemini provider exists) -->
-            {{with (index (index .Data "Providers") "gemini")}}
-            <div class="bg-gray-800 rounded-2xl border border-gray-700 p-6 mb-6">
-                <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-lg font-semibold text-white flex items-center">
-                        <svg class="w-5 h-5 text-blue-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
-                        Gemini Allowed Models
-                    </h3>
-                    <div class="flex items-center space-x-2">
-                        <button type="button" onclick="selectAllModels()" class="px-3 py-1.5 text-xs font-medium bg-blue-600/20 text-blue-400 border border-blue-600/50 rounded-lg hover:bg-blue-600/30 transition-colors">
-                            Allow All
-                        </button>
-                        <button type="button" onclick="deselectAllModels()" class="px-3 py-1.5 text-xs font-medium bg-gray-600/20 text-gray-400 border border-gray-600/50 rounded-lg hover:bg-gray-600/30 transition-colors">
-                            Clear All
-                        </button>
-                    </div>
-                </div>
-                <div id="modelSection" class="{{if .AllowedModels}}{{else}}hidden{{end}} mb-4">
-                    <div id="modelList" class="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
-                        {{range .AllowedModels}}
-                        <label class="flex items-center space-x-2 text-gray-300 text-sm">
-                            <input type="checkbox" name="allowed_models" value="{{.}}" checked class="rounded bg-gray-900 border-gray-600 text-blue-600">
-                            <span>{{.}}</span>
-                        </label>
-                        {{end}}
-                    </div>
-                </div>
-                <p class="text-gray-500 text-xs">Click "Fetch Available Models" above to get the list from Google's API</p>
-            </div>
-            {{end}}
-
-            <!-- Server Info -->
-            <div class="bg-gray-800 rounded-2xl border border-gray-700 p-6 mb-6">
-                <h3 class="text-lg font-semibold text-white mb-6 flex items-center">
-                    <svg class="w-5 h-5 text-purple-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>
-                    </svg>
-                    Server Information
-                </h3>
-                
-                <div class="grid grid-cols-2 gap-4">
-                    <div class="bg-gray-900/50 rounded-xl p-4">
-                        <p class="text-gray-500 text-xs uppercase tracking-wide">Port</p>
-                        <p class="text-white font-medium">{{(index .Data "Config").Server.Port}}</p>
-                    </div>
-                    <div class="bg-gray-900/50 rounded-xl p-4">
-                        <p class="text-gray-500 text-xs uppercase tracking-wide">Host</p>
-                        <p class="text-white font-medium">{{(index .Data "Config").Server.Host}}</p>
-                    </div>
-                    <div class="bg-gray-900/50 rounded-xl p-4">
-                        <p class="text-gray-500 text-xs uppercase tracking-wide">Default Rate (min)</p>
-                        <p class="text-white font-medium">{{(index .Data "Config").Defaults.RateLimit.RequestsPerMinute}}</p>
-                    </div>
-                    <div class="bg-gray-900/50 rounded-xl p-4">
-                        <p class="text-gray-500 text-xs uppercase tracking-wide">Default Daily Quota</p>
-                        <p class="text-white font-medium">{{(index .Data "Config").Defaults.Quota.MaxRequestsPerDay}} requests</p>
-                    </div>
-                </div>
-            </div>
-
-            <button type="submit" class="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white font-semibold py-3 px-4 rounded-xl hover:from-blue-700 hover:to-blue-800 transition-all">
-                Save Settings
-            </button>
-        </form>
-        {{end}}
+        </div>
     </div>
+</body>
+</html>
+{{end}}
+
+{{define "stats.html"}}
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Statistics - AI Gateway</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/chart.js"></script>
+    <style>body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }</style>
+    <script>window.chartColors = ['#3B82F6','#10B981','#8B5CF6','#F59E0B','#EF4444','#EC4899','#06B6D4','#F97316','#84CC16','#E879F9'];</script>
+</head>
+<body class="bg-gray-900 min-h-screen">
+    <nav class="bg-gray-800/80 backdrop-blur-md border-b border-gray-700 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center space-x-3">
+                    <div class="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center">
+                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                        </svg>
+                    </div>
+                    <span class="text-xl font-bold text-white">AI Gateway</span>
+                </div>
+                <div class="flex items-center space-x-1">
+                    <a href="/admin/dashboard" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Dashboard</a>
+                    <a href="/admin/clients" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">Clients</a>
+                    <a href="/admin/stats" class="px-3 py-2 rounded-lg text-sm font-medium text-white bg-gray-700">Stats</a>
+                    <form method="POST" action="/admin/logout" class="ml-2">
+                        <button type="submit" class="px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                            </svg>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <h1 class="text-2xl font-bold text-white mb-8">Statistics</h1>
+
+        <!-- Overview Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <p class="text-gray-400 text-sm font-medium">Requests Today</p>
+                <p class="text-3xl font-bold text-white mt-2">{{(index .Data "Stats").TotalRequestsToday}}</p>
+            </div>
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <p class="text-gray-400 text-sm font-medium">Input Tokens Today</p>
+                <p class="text-3xl font-bold text-white mt-2">{{formatInt (index .Data "Stats").TotalInputTokensToday}}</p>
+            </div>
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <p class="text-gray-400 text-sm font-medium">Output Tokens Today</p>
+                <p class="text-3xl font-bold text-white mt-2">{{formatInt (index .Data "Stats").TotalOutputTokensToday}}</p>
+            </div>
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <p class="text-gray-400 text-sm font-medium">Error Rate</p>
+                <p class="text-3xl font-bold text-white mt-2">{{printf "%.1f" (index .Data "Stats").ErrorRate}}%</p>
+            </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <h3 class="text-lg font-semibold text-white mb-4">Requests (Last 7 Days)</h3>
+                <canvas id="requestsChart" height="200"></canvas>
+            </div>
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <h3 class="text-lg font-semibold text-white mb-4">Tokens (Last 7 Days)</h3>
+                <canvas id="tokensChart" height="200"></canvas>
+            </div>
+        </div>
+
+        <!-- Hourly Chart -->
+        <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700 mb-8">
+            <h3 class="text-lg font-semibold text-white mb-4">Last 24 Hours</h3>
+            <canvas id="hourlyChart" height="100"></canvas>
+        </div>
+
+        <!-- Model Stats -->
+        <div class="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden mb-8">
+            <div class="px-6 py-4 border-b border-gray-700">
+                <h3 class="text-lg font-semibold text-white">Model Statistics (7 days)</h3>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-900/50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Model</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Requests</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Tokens</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Avg Latency</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Success Rate</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        {{range (index .Data "ModelStats")}}
+                        <tr class="hover:bg-gray-700/50">
+                            <td class="px-6 py-4 text-sm text-white">{{.Model}}</td>
+                            <td class="px-6 py-4 text-sm text-gray-300">{{formatInt .TotalRequests}}</td>
+                            <td class="px-6 py-4 text-sm text-gray-300">{{formatInt .TotalTokens}}</td>
+                            <td class="px-6 py-4 text-sm text-gray-300">{{printf "%.0f" .AvgLatencyMs}}ms</td>
+                            <td class="px-6 py-4 text-sm">
+                                <span class="px-2 py-1 text-xs font-medium rounded-full {{if ge .SuccessRate 95.0}}bg-green-500/20 text-green-400{{else if ge .SuccessRate 80.0}}bg-yellow-500/20 text-yellow-400{{else}}bg-red-500/20 text-red-400{{end}}">
+                                    {{printf "%.1f" .SuccessRate}}%
+                                </span>
+                            </td>
+                        </tr>
+                        {{else}}
+                        <tr>
+                            <td colspan="5" class="px-6 py-8 text-center text-gray-500">No model data yet</td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Client Stats -->
+        <div class="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-700">
+                <h3 class="text-lg font-semibold text-white">Client Statistics (7 days)</h3>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-900/50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Client</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Requests</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Tokens</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Success Rate</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        {{range (index .Data "ClientStats")}}
+                        <tr class="hover:bg-gray-700/50">
+                            <td class="px-6 py-4 text-sm text-white">{{.ClientName}}</td>
+                            <td class="px-6 py-4 text-sm text-gray-300">{{formatInt .TotalRequests}}</td>
+                            <td class="px-6 py-4 text-sm text-gray-300">{{formatInt .TotalTokens}}</td>
+                            <td class="px-6 py-4 text-sm">
+                                <span class="px-2 py-1 text-xs font-medium rounded-full {{if ge .SuccessRate 95.0}}bg-green-500/20 text-green-400{{else if ge .SuccessRate 80.0}}bg-yellow-500/20 text-yellow-400{{else}}bg-red-500/20 text-red-400{{end}}">
+                                    {{printf "%.1f" .SuccessRate}}%
+                                </span>
+                            </td>
+                        </tr>
+                        {{else}}
+                        <tr>
+                            <td colspan="4" class="px-6 py-8 text-center text-gray-500">No client data yet</td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Historical 7 days chart
+        var histData = {{toJson (index .Data "Historical7")}};
+        if (!Array.isArray(histData)) histData = [];
+        const requestsCtx = document.getElementById('requestsChart').getContext('2d');
+        if (histData && histData.length > 0) {
+            new Chart(requestsCtx, {
+                type: 'line',
+                data: {
+                    labels: histData.map(d => new Date(d.date).toLocaleDateString()),
+                    datasets: [{
+                        label: 'Requests',
+                        data: histData.map(d => d.total_requests),
+                        borderColor: '#3B82F6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#9CA3AF' }, grid: { color: '#374151' } }, y: { ticks: { color: '#9CA3AF' }, grid: { color: '#374151' } } } }
+            });
+        } else {
+            requestsCtx.font = '14px Inter';
+            requestsCtx.fillStyle = '#6B7280';
+            requestsCtx.fillText('No data yet', requestsCtx.canvas.width / 2 - 40, requestsCtx.canvas.height / 2);
+        }
+
+        const tokensCtx = document.getElementById('tokensChart').getContext('2d');
+        if (histData && histData.length > 0) {
+            new Chart(tokensCtx, {
+                type: 'line',
+                data: {
+                    labels: histData.map(d => new Date(d.date).toLocaleDateString()),
+                    datasets: [
+                        { label: 'Input', data: histData.map(d => d.total_input_tokens), borderColor: '#10B981', tension: 0.4 },
+                        { label: 'Output', data: histData.map(d => d.total_output_tokens), borderColor: '#8B5CF6', tension: 0.4 }
+                    ]
+                },
+                options: { responsive: true, plugins: { legend: { labels: { color: '#9CA3AF' } } }, scales: { x: { ticks: { color: '#9CA3AF' }, grid: { color: '#374151' } }, y: { ticks: { color: '#9CA3AF' }, grid: { color: '#374151' } } } }
+            });
+        } else {
+            tokensCtx.font = '14px Inter';
+            tokensCtx.fillStyle = '#6B7280';
+            tokensCtx.fillText('No data yet', tokensCtx.canvas.width / 2 - 40, tokensCtx.canvas.height / 2);
+        }
+
+        // Hourly chart
+        var hourlyData = {{toJson (index .Data "Hourly24")}};
+        if (!Array.isArray(hourlyData)) hourlyData = [];
+        const hourlyCtx = document.getElementById('hourlyChart').getContext('2d');
+        if (hourlyData && hourlyData.length > 0) {
+            new Chart(hourlyCtx, {
+                type: 'bar',
+                data: {
+                    labels: hourlyData.map(d => new Date(d.hour).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})),
+                    datasets: [
+                        { label: 'Requests', data: hourlyData.map(d => d.total_requests), backgroundColor: '#3B82F6' },
+                        { label: 'Errors', data: hourlyData.map(d => d.error_count), backgroundColor: '#EF4444' }
+                    ]
+                },
+                options: { responsive: true, plugins: { legend: { labels: { color: '#9CA3AF' } } }, scales: { x: { stacked: true, ticks: { color: '#9CA3AF' }, grid: { color: '#374151' } }, y: { stacked: true, ticks: { color: '#9CA3AF' }, grid: { color: '#374151' } } } }
+            });
+        } else {
+            hourlyCtx.font = '14px Inter';
+            hourlyCtx.fillStyle = '#6B7280';
+            hourlyCtx.fillText('No data yet', hourlyCtx.canvas.width / 2 - 40, hourlyCtx.canvas.height / 2);
+        }
+    </script>
 </body>
 </html>
 {{end}}

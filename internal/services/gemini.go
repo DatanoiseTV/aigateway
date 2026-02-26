@@ -26,6 +26,11 @@ func NewGeminiService(db *gorm.DB, cfg *config.Config) *GeminiService {
 	return &GeminiService{db: db, cfg: cfg}
 }
 
+// GetConfig returns the service's config for access to provider configurations.
+func (s *GeminiService) GetConfig() *config.Config {
+	return s.cfg
+}
+
 // geminiProvider returns the gemini provider config, or a zero-value if not configured.
 func (s *GeminiService) geminiProvider() config.ProviderConfig {
 	if p := s.cfg.GetProvider("gemini"); p != nil {

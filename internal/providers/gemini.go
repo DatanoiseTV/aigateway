@@ -162,6 +162,42 @@ func (p *GeminiProvider) TestConnection() (string, bool, error) {
 	return "Connected successfully", true, nil
 }
 
+func (p *GeminiProvider) FetchModels() ([]string, error) {
+	if p.cfg.APIKey == "" {
+		return nil, fmt.Errorf("API key not configured")
+	}
+	url := "https://generativelanguage.googleapis.com/v1/models?key=" + p.cfg.APIKey
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("API returned status: %s", resp.Status)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	var models []string
+	for _, m := range result.Models {
+		models = append(models, m.Name)
+	}
+	return models, nil
+}
+
 // Helper functions for parsing Gemini's nested JSON structure
 func extractNestedText(resp map[string]interface{}, keys ...string) string {
 	candidates, ok := resp["candidates"].([]interface{})

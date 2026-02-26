@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-gateway/internal/config"
 	"ai-gateway/internal/middleware"
 	"ai-gateway/internal/models"
 	"ai-gateway/internal/providers"
@@ -22,11 +23,12 @@ import (
 
 type OpenAIHandler struct {
 	geminiService *services.GeminiService
+	clientService *services.ClientService
 	registry      *providers.Registry
 }
 
-func NewOpenAIHandler(geminiService *services.GeminiService, registry *providers.Registry) *OpenAIHandler {
-	return &OpenAIHandler{geminiService: geminiService, registry: registry}
+func NewOpenAIHandler(geminiService *services.GeminiService, clientService *services.ClientService, registry *providers.Registry) *OpenAIHandler {
+	return &OpenAIHandler{geminiService: geminiService, clientService: clientService, registry: registry}
 }
 
 func (h *OpenAIHandler) RegisterRoutes(r chi.Router) {
@@ -104,12 +106,66 @@ func mapUpstreamStatusToHTTP(geminiStatus int) int {
 }
 
 // resolveProvider returns the appropriate provider for the given client.
+// If the client has its own API key configured, a provider is built from
+// the client's settings. Otherwise we fall back to the global registry.
 func (h *OpenAIHandler) resolveProvider(client *models.Client) (providers.Provider, error) {
 	backend := client.Backend
 	if backend == "" {
 		backend = "gemini"
 	}
-	return h.registry.GetWithOverride(backend, client.BackendBaseURL)
+
+	// If the client has a per-client API key or base URL, build a dedicated provider
+	if client.BackendAPIKey != "" || client.BackendBaseURL != "" {
+		cfg := config.ProviderConfig{
+			Type:           backend,
+			APIKey:         client.BackendAPIKey,
+			BaseURL:        client.BackendBaseURL,
+			DefaultModel:   client.BackendDefaultModel,
+			TimeoutSeconds: 120,
+		}
+		// If client has no API key but does have a base URL override,
+		// inherit the API key from the global provider if one exists
+		if cfg.APIKey == "" {
+			if globalP := h.geminiService.GetConfig().GetProvider(backend); globalP != nil {
+				cfg.APIKey = globalP.APIKey
+			}
+		}
+		if cfg.DefaultModel == "" {
+			if globalP := h.geminiService.GetConfig().GetProvider(backend); globalP != nil {
+				cfg.DefaultModel = globalP.DefaultModel
+			}
+		}
+		return providers.BuildSingleProvider(backend, cfg)
+	}
+
+	// Fall back to the global registry
+	return h.registry.Get(backend)
+}
+
+// updateClientModels fetches available models from the provider and stores them in the client record.
+func (h *OpenAIHandler) updateClientModels(client *models.Client, provider providers.Provider) {
+	models, err := provider.FetchModels()
+	if err != nil {
+		log.Printf("[%s] Failed to fetch models for client %s: %v", provider.Name(), client.Name, err)
+		return
+	}
+
+	if len(models) == 0 {
+		return
+	}
+
+	// Store models as JSON
+	modelsJSON, err := json.Marshal(models)
+	if err != nil {
+		log.Printf("[%s] Failed to marshal models for client %s: %v", provider.Name(), client.Name, err)
+		return
+	}
+
+	client.BackendModels = string(modelsJSON)
+	if err := h.clientService.UpdateClient(client); err != nil {
+		log.Printf("[%s] Failed to update models for client %s: %v", provider.Name(), client.Name, err)
+	}
+	log.Printf("[%s] Updated models for client %s: %v", provider.Name(), client.Name, models)
 }
 
 func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -163,8 +219,13 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 // configured, it is prepended as a system message to every request.
 func (h *OpenAIHandler) buildChatRequest(req OpenAIChatRequest, provider providers.Provider, client *models.Client) *providers.ChatRequest {
 	model := req.Model
+	// Priority: request model -> client default model -> provider default model
 	if model == "" {
-		model = provider.DefaultModel()
+		if client.BackendDefaultModel != "" {
+			model = client.BackendDefaultModel
+		} else {
+			model = provider.DefaultModel()
+		}
 	}
 
 	messages := make([]providers.ChatMessage, 0, len(req.Messages)+1)
@@ -246,6 +307,11 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 	w.Header().Set("openai-processing-ms", fmt.Sprintf("%d", latencyMs))
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
+
+	// Update client models if not already cached
+	if client.BackendModels == "" {
+		h.updateClientModels(client, provider)
+	}
 }
 
 // handleStreamingRequest sends a streaming request through the provider,
@@ -356,6 +422,11 @@ func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Re
 
 	// Log the request after streaming completes
 	h.geminiService.LogRequest(client.ID, chatReq.Model, resp.StatusCode, inputTokens, outputTokens, latencyMs, "")
+
+	// Update client models if not already cached
+	if client.BackendModels == "" {
+		h.updateClientModels(client, provider)
+	}
 }
 
 // sendSSEChunk writes a single OpenAI-format SSE chunk to the client.
@@ -411,8 +482,98 @@ func extractErrorMessage(body []byte) string {
 }
 
 func (h *OpenAIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
+	client := middleware.GetClientFromContext(r.Context())
+
+	log.Printf("[ListModels] Request from client: %s, path: %s", r.RemoteAddr, r.URL.Path)
+	log.Printf("[ListModels] Authenticated client: %v", client != nil)
+	if client != nil {
+		log.Printf("[ListModels] Client ID: %s, Backend: %s, BackendModels: %q", client.ID, client.Backend, client.BackendModels)
+	}
+
+	// If authenticated client, return their models
+	if client != nil && client.BackendModels != "" && client.BackendModels != "[]" {
+		var models []string
+		if err := json.Unmarshal([]byte(client.BackendModels), &models); err == nil && len(models) > 0 {
+			log.Printf("[ListModels] Returning %d models from client BackendModels", len(models))
+			var allModels []OpenAIModel
+			for _, m := range models {
+				allModels = append(allModels, OpenAIModel{
+					ID:      m,
+					Object:  "model",
+					Created: time.Now().Unix(),
+					OwnedBy: client.Backend,
+				})
+			}
+			result := OpenAIModelsResponse{
+				Object: "list",
+				Data:   allModels,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(result)
+			return
+		} else {
+			log.Printf("[ListModels] Failed to parse BackendModels: %v", err)
+		}
+	}
+
+	// Try to fetch models from client's provider if not available
+	if client != nil && (client.BackendModels == "" || client.BackendModels == "[]") {
+		log.Printf("[ListModels] No BackendModels (%q), attempting to fetch from client provider: %s", client.BackendModels, client.Backend)
+
+		pcfg := config.ProviderConfig{
+			Type:           client.Backend,
+			APIKey:         client.BackendAPIKey,
+			BaseURL:        client.BackendBaseURL,
+			DefaultModel:   client.BackendDefaultModel,
+			TimeoutSeconds: 30,
+		}
+
+		log.Printf("[ListModels] Building provider: backend=%s, baseURL=%s, apiKey=%s", client.Backend, pcfg.BaseURL, pcfg.APIKey)
+
+		provider, err := providers.BuildSingleProvider(client.Backend, pcfg)
+		if err != nil {
+			log.Printf("[ListModels] Failed to build provider: %v", err)
+		} else {
+			log.Printf("[ListModels] Provider built successfully, fetching models...")
+			models, fetchErr := provider.FetchModels()
+			if fetchErr != nil {
+				log.Printf("[ListModels] Failed to fetch models from provider: %v", fetchErr)
+			} else if len(models) == 0 {
+				log.Printf("[ListModels] Fetched 0 models from provider")
+			} else {
+				log.Printf("[ListModels] Fetched %d models from provider: %v", len(models), models)
+				// Save to client
+				modelsJSON, _ := json.Marshal(models)
+				client.BackendModels = string(modelsJSON)
+				h.clientService.UpdateClient(client)
+
+				var allModels []OpenAIModel
+				for _, m := range models {
+					allModels = append(allModels, OpenAIModel{
+						ID:      m,
+						Object:  "model",
+						Created: time.Now().Unix(),
+						OwnedBy: client.Backend,
+					})
+				}
+				result := OpenAIModelsResponse{
+					Object: "list",
+					Data:   allModels,
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(result)
+				return
+			}
+		}
+	}
+
+	// Otherwise return models from global registry
+	log.Printf("[ListModels] No client or no BackendModels, falling back to global registry")
 	var allModels []OpenAIModel
 
+	// Get models from global registry if configured
 	for _, name := range h.registry.Names() {
 		provider, err := h.registry.Get(name)
 		if err != nil {
@@ -427,6 +588,8 @@ func (h *OpenAIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+
+	log.Printf("[ListModels] Returning %d models from global registry", len(allModels))
 
 	result := OpenAIModelsResponse{
 		Object: "list",

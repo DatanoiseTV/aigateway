@@ -54,9 +54,8 @@ On first launch the server creates a `config.yaml`, generates admin credentials 
 
 Open `http://localhost:8090/admin`, log in, and:
 
-1. Go to **Settings** -- add your provider API keys
-2. Go to **Clients** -- create API keys for your applications
-3. Point your OpenAI SDK at `http://localhost:8090/v1` with the client key
+1. Go to **Clients** -- create API keys for your applications, each with their own backend provider, API key, and model settings
+2. Point your OpenAI SDK at `http://localhost:8090/v1` with the client key
 
 ---
 
@@ -117,7 +116,7 @@ curl http://localhost:8090/v1/models \
   -H "Authorization: Bearer <CLIENT_API_KEY>"
 ```
 
-Returns models from all configured providers.
+Returns models available to the client (from cached model list or auto-fetched from backend). If no models are configured, they are automatically fetched from the client's backend on first request.
 
 ---
 
@@ -127,7 +126,10 @@ Each client (API key) has independent configuration:
 
 | Feature | Description |
 |---|---|
-| **Backend Provider** | Route requests to any configured provider |
+| **Backend Provider** | Route requests to any supported provider (Gemini, OpenAI, Anthropic, Ollama, LM Studio, etc.) |
+| **Backend API Key** | Per-client upstream API key (uses provider's credentials) |
+| **Default Model** | Model to use when none specified |
+| **Model Whitelist** | Restrict which models this client can access |
 | **System Prompt** | Injected as a system message on every request |
 | **Base URL Override** | Point at a specific Ollama/LM Studio instance |
 | **Rate Limits** | Per-minute, per-hour, per-day request caps |
@@ -144,7 +146,9 @@ The web UI at `/admin` provides:
 
 - **Real-time stats** -- requests, tokens, and model usage updating live via WebSocket
 - **Client management** -- create, edit, disable, and delete clients
-- **Provider settings** -- add and configure backend providers
+- **Test Connection** -- verify connectivity to client backend
+- **Fetch Models** -- auto-discover available models from backend (Ollama, LM Studio, etc.)
+- **Model Whitelist UI** -- select which models each client can use
 - **Request history** -- per-client and global request logs with status, latency, and token counts
 
 ---
@@ -160,49 +164,6 @@ server:
   https:
     enabled: false
 
-providers:
-  gemini:
-    type: gemini
-    api_key: ""
-    default_model: gemini-2.5-flash
-    timeout_seconds: 120
-  openai:
-    type: openai
-    api_key: ""
-    default_model: gpt-4o
-  anthropic:
-    type: anthropic
-    api_key: ""
-    default_model: claude-sonnet-4-20250514
-  mistral:
-    type: mistral
-    api_key: ""
-    default_model: mistral-large-latest
-  perplexity:
-    type: perplexity
-    api_key: ""
-    default_model: sonar-pro
-  xai:
-    type: xai
-    api_key: ""
-    default_model: grok-3
-  cohere:
-    type: cohere
-    api_key: ""
-    default_model: command-r-plus
-  azure:
-    type: azure-openai
-    api_key: ""
-    base_url: https://YOUR_RESOURCE.openai.azure.com
-    default_model: gpt-4o
-  ollama:
-    type: ollama
-    base_url: http://localhost:11434/v1
-    default_model: llama3.2
-  lmstudio:
-    type: lmstudio
-    base_url: http://localhost:1234/v1
-
 defaults:
   rate_limit:
     requests_per_minute: 60
@@ -217,7 +178,7 @@ database:
   path: ./data/gateway.db
 ```
 
-Providers can also be added and configured through the admin UI. Only add the providers you need.
+All provider configuration (API keys, endpoints, models) is done per-client in the admin UI. Each client can have its own backend provider, API key, base URL, and model settings.
 
 ### CLI Flags
 

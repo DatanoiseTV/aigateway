@@ -205,3 +205,46 @@ func (p *AzureOpenAIProvider) TestConnection() (string, bool, error) {
 	}
 	return "Connected successfully", true, nil
 }
+
+func (p *AzureOpenAIProvider) FetchModels() ([]string, error) {
+	if p.cfg.BaseURL == "" {
+		return nil, fmt.Errorf("Base URL not configured")
+	}
+	url := fmt.Sprintf("%s/openai/models?api-version=%s", p.cfg.BaseURL, p.apiVersion)
+	httpReq, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	p.setHeaders(httpReq)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("API returned status: %s", resp.Status)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	var models []string
+	for _, m := range result.Data {
+		models = append(models, m.ID)
+	}
+	return models, nil
+}

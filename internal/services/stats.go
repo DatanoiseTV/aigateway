@@ -164,3 +164,158 @@ func (s *StatsService) GetModelUsage() (map[string]int, error) {
 
 	return usage, nil
 }
+
+type DailyStats struct {
+	Date              time.Time `json:"date"`
+	TotalRequests     int       `json:"total_requests"`
+	TotalInputTokens  int       `json:"total_input_tokens"`
+	TotalOutputTokens int       `json:"total_output_tokens"`
+	UniqueClients     int       `json:"unique_clients"`
+}
+
+func (s *StatsService) GetHistoricalStats(days int) ([]DailyStats, error) {
+	startDate := time.Now().AddDate(0, 0, -days).Truncate(24 * time.Hour)
+
+	var results []DailyStats
+	err := s.db.Model(&models.DailyUsage{}).
+		Select("date, COALESCE(SUM(total_requests), 0) as total_requests, COALESCE(SUM(total_input_tokens), 0) as total_input_tokens, COALESCE(SUM(total_output_tokens), 0) as total_output_tokens, COUNT(DISTINCT client_id) as unique_clients").
+		Where("date >= ?", startDate).
+		Group("date").
+		Order("date ASC").
+		Scan(&results).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
+type HourlyStats struct {
+	Hour          time.Time `json:"hour"`
+	TotalRequests int       `json:"total_requests"`
+	AvgLatencyMs  float64   `json:"avg_latency_ms"`
+	ErrorCount    int       `json:"error_count"`
+}
+
+func (s *StatsService) GetHourlyStats(hours int) ([]HourlyStats, error) {
+	startTime := time.Now().Add(-time.Duration(hours) * time.Hour)
+
+	var results []HourlyStats
+	err := s.db.Model(&models.RequestLog{}).
+		Select("date_trunc('hour', created_at) as hour, COUNT(*) as total_requests, COALESCE(AVG(latency_ms), 0) as avg_latency_ms, SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as error_count").
+		Where("created_at >= ?", startTime).
+		Group("hour").
+		Order("hour ASC").
+		Scan(&results).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
+type ModelStats struct {
+	Model         string  `json:"model"`
+	TotalRequests int     `json:"total_requests"`
+	TotalTokens   int     `json:"total_tokens"`
+	AvgLatencyMs  float64 `json:"avg_latency_ms"`
+	SuccessRate   float64 `json:"success_rate"`
+}
+
+func (s *StatsService) GetModelStats(days int) ([]ModelStats, error) {
+	startDate := time.Now().AddDate(0, 0, -days)
+
+	type Result struct {
+		Model         string
+		TotalRequests int
+		TotalTokens   int
+		AvgLatency    float64
+		ErrorCount    int
+	}
+
+	var results []Result
+	err := s.db.Model(&models.RequestLog{}).
+		Select("model, COUNT(*) as total_requests, COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens, COALESCE(AVG(latency_ms), 0) as avg_latency, SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as error_count").
+		Where("created_at >= ?", startDate).
+		Group("model").
+		Order("total_requests DESC").
+		Scan(&results).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	var modelStats []ModelStats
+	for _, r := range results {
+		successRate := 100.0
+		if r.TotalRequests > 0 {
+			successRate = float64(r.TotalRequests-r.ErrorCount) / float64(r.TotalRequests) * 100
+		}
+		modelStats = append(modelStats, ModelStats{
+			Model:         r.Model,
+			TotalRequests: r.TotalRequests,
+			TotalTokens:   r.TotalTokens,
+			AvgLatencyMs:  r.AvgLatency,
+			SuccessRate:   successRate,
+		})
+	}
+
+	return modelStats, nil
+}
+
+type ClientStats2 struct {
+	ClientID      string  `json:"client_id"`
+	ClientName    string  `json:"client_name"`
+	TotalRequests int     `json:"total_requests"`
+	TotalTokens   int     `json:"total_tokens"`
+	SuccessRate   float64 `json:"success_rate"`
+}
+
+func (s *StatsService) GetClientStats2(days int) ([]ClientStats2, error) {
+	startDate := time.Now().AddDate(0, 0, -days)
+
+	type Result struct {
+		ClientID      string
+		TotalRequests int
+		TotalTokens   int
+		ErrorCount    int
+	}
+
+	var results []Result
+	err := s.db.Model(&models.RequestLog{}).
+		Select("client_id, COUNT(*) as total_requests, COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens, SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as error_count").
+		Where("created_at >= ?", startDate).
+		Group("client_id").
+		Order("total_requests DESC").
+		Scan(&results).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	var clientStats []ClientStats2
+	for _, r := range results {
+		client, _ := NewClientService(s.db).GetClientByID(r.ClientID)
+		clientName := r.ClientID
+		if client != nil {
+			clientName = client.Name
+		}
+
+		successRate := 100.0
+		if r.TotalRequests > 0 {
+			successRate = float64(r.TotalRequests-r.ErrorCount) / float64(r.TotalRequests) * 100
+		}
+
+		clientStats = append(clientStats, ClientStats2{
+			ClientID:      r.ClientID,
+			ClientName:    clientName,
+			TotalRequests: r.TotalRequests,
+			TotalTokens:   r.TotalTokens,
+			SuccessRate:   successRate,
+		})
+	}
+
+	return clientStats, nil
+}

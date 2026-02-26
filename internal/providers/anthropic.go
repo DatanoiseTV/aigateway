@@ -202,3 +202,14 @@ func (p *AnthropicProvider) TestConnection() (string, bool, error) {
 	}
 	return "Connected successfully", true, nil
 }
+
+func (p *AnthropicProvider) FetchModels() ([]string, error) {
+	// Anthropic doesn't have a public models endpoint, return known models
+	return []string{
+		"claude-sonnet-4-20250514",
+		"claude-sonnet-4-20250507",
+		"claude-3-opus-20240229",
+		"claude-3-sonnet-20240229",
+		"claude-3-haiku-20240307",
+	}, nil
+}

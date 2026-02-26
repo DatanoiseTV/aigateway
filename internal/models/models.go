@@ -10,10 +10,18 @@ type Client struct {
 	Description string `gorm:"type:text" json:"description"`
 	APIKeyHash  []byte `gorm:"type:blob;uniqueIndex" json:"-"`
 	IsActive    bool   `gorm:"default:true" json:"is_active"`
-	// Backend is the provider name from config (e.g. "gemini", "openai", "anthropic", "mistral", "ollama", "lmstudio")
+	// KeyPrefix is the custom prefix for the API key (e.g., "sk-", "gm_", "myapp_")
+	KeyPrefix string `gorm:"type:varchar(20)" json:"key_prefix,omitempty"`
+	// Backend is the provider type (e.g. "gemini", "openai", "anthropic", "mistral", "ollama", "lmstudio", etc.)
 	Backend string `gorm:"type:varchar(50);default:'gemini'" json:"backend"`
-	// BackendBaseURL allows per-client URL override for local backends (Ollama, LM Studio)
+	// BackendAPIKey is the upstream LLM API key for this client
+	BackendAPIKey string `gorm:"type:varchar(500)" json:"-"`
+	// BackendBaseURL allows per-client URL override (required for Azure, useful for Ollama/LM Studio)
 	BackendBaseURL string `gorm:"type:varchar(500)" json:"backend_base_url,omitempty"`
+	// BackendDefaultModel is the default model to use when the request does not specify one
+	BackendDefaultModel string `gorm:"type:varchar(200)" json:"backend_default_model,omitempty"`
+	// BackendModels is a JSON array of available models fetched from the backend
+	BackendModels string `gorm:"type:text" json:"backend_models,omitempty"`
 	// SystemPrompt is an optional system prompt prepended to every request from this client
 	SystemPrompt         string    `gorm:"type:text" json:"system_prompt,omitempty"`
 	RateLimitMinute      int       `gorm:"default:60" json:"rate_limit_minute"`

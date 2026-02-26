@@ -23,8 +23,8 @@ func NewClientService(db *gorm.DB) *ClientService {
 	return &ClientService{db: db}
 }
 
-func (s *ClientService) CreateClient(name, description, keyType string, cfg *config.Config) (*models.Client, string, error) {
-	apiKey := GenerateAPIKey(keyType)
+func (s *ClientService) CreateClient(name, description, keyType, keyPrefix string, cfg *config.Config) (*models.Client, string, error) {
+	apiKey := GenerateAPIKeyWithPrefix(keyType, keyPrefix)
 	apiKeyHash := hashAPIKey(apiKey)
 
 	client := &models.Client{
@@ -32,6 +32,7 @@ func (s *ClientService) CreateClient(name, description, keyType string, cfg *con
 		Name:                 name,
 		Description:          description,
 		APIKeyHash:           apiKeyHash,
+		KeyPrefix:            keyPrefix,
 		IsActive:             true,
 		RateLimitMinute:      cfg.Defaults.RateLimit.RequestsPerMinute,
 		RateLimitHour:        cfg.Defaults.RateLimit.RequestsPerHour,
@@ -97,12 +98,13 @@ func (s *ClientService) DeleteClient(id string) error {
 	return s.db.Delete(&models.Client{}, "id = ?", id).Error
 }
 
-func (s *ClientService) RegenerateAPIKey(clientID, keyType string) (string, error) {
-	apiKey := GenerateAPIKey(keyType)
+func (s *ClientService) RegenerateAPIKey(clientID, keyType, keyPrefix string) (string, error) {
+	apiKey := GenerateAPIKeyWithPrefix(keyType, keyPrefix)
 	apiKeyHash := hashAPIKey(apiKey)
 
 	err := s.db.Model(&models.Client{}).Where("id = ?", clientID).Updates(map[string]interface{}{
 		"api_key_hash": apiKeyHash,
+		"key_prefix":   keyPrefix,
 		"updated_at":   time.Now(),
 	}).Error
 
@@ -124,14 +126,24 @@ func (s *ClientService) GetClientsByIDs(ids []string) ([]models.Client, error) {
 }
 
 func GenerateAPIKey(keyType string) string {
-	switch keyType {
-	case "anthropic":
-		return "sk-ant-" + uuid.New().String()
-	case "openai":
-		return "sk-" + uuid.New().String()
-	default:
-		return "gm_" + uuid.New().String()
+	return GenerateAPIKeyWithPrefix(keyType, "")
+}
+
+func GenerateAPIKeyWithPrefix(keyType, customPrefix string) string {
+	var prefix string
+	if customPrefix != "" {
+		prefix = customPrefix
+	} else {
+		switch keyType {
+		case "anthropic":
+			prefix = "sk-ant-"
+		case "openai":
+			prefix = "sk-"
+		default:
+			prefix = "gm_"
+		}
 	}
+	return prefix + uuid.New().String()
 }
 
 func generateAPIKey() string {

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"ai-gateway/internal/config"
@@ -38,7 +40,7 @@ func NewMistralProvider(cfg config.ProviderConfig) *OpenAICompatProvider {
 
 func NewOllamaProvider(name string, cfg config.ProviderConfig) *OpenAICompatProvider {
 	if cfg.BaseURL == "" {
-		cfg.BaseURL = "http://localhost:11434/v1"
+		cfg.BaseURL = "http://localhost:11434"
 	}
 	if name == "" {
 		name = "ollama"
@@ -89,7 +91,21 @@ func (p *OpenAICompatProvider) WithBaseURL(url string) Provider {
 
 func (p *OpenAICompatProvider) ChatCompletion(req *ChatRequest) ([]byte, int, error) {
 	body := p.buildRequestBody(req, false)
-	url := p.cfg.BaseURL + "/chat/completions"
+
+	// Determine the correct endpoint based on provider type
+	var url string
+	switch p.name {
+	case "ollama":
+		url = p.cfg.BaseURL + "/api/chat"
+	case "lmstudio":
+		// LM Studio base URL already includes /v1
+		url = p.cfg.BaseURL + "/chat/completions"
+	default:
+		// OpenAI, Mistral, etc. - base URL already includes /v1
+		url = p.cfg.BaseURL + "/chat/completions"
+	}
+
+	log.Printf("[%s] Request to %s: %s", p.name, url, string(body))
 
 	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
@@ -109,12 +125,26 @@ func (p *OpenAICompatProvider) ChatCompletion(req *ChatRequest) ([]byte, int, er
 		return nil, resp.StatusCode, fmt.Errorf("failed to read response: %w", err)
 	}
 
+	log.Printf("[%s] Response: %d - %s", p.name, resp.StatusCode, string(respBody))
+
 	return respBody, resp.StatusCode, nil
 }
 
 func (p *OpenAICompatProvider) ChatCompletionStream(req *ChatRequest) (*http.Response, error) {
 	body := p.buildRequestBody(req, true)
-	url := p.cfg.BaseURL + "/chat/completions"
+
+	// Determine the correct endpoint based on provider type
+	var url string
+	switch p.name {
+	case "ollama":
+		url = p.cfg.BaseURL + "/api/chat"
+	case "lmstudio":
+		// LM Studio base URL already includes /v1
+		url = p.cfg.BaseURL + "/chat/completions"
+	default:
+		// OpenAI, Mistral, etc. - base URL already includes /v1
+		url = p.cfg.BaseURL + "/chat/completions"
+	}
 
 	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
@@ -223,7 +253,18 @@ func (p *OpenAICompatProvider) Models() []string     { return p.cfg.AllowedModel
 func (p *OpenAICompatProvider) DefaultModel() string { return p.cfg.DefaultModel }
 
 func (p *OpenAICompatProvider) TestConnection() (string, bool, error) {
-	url := p.cfg.BaseURL + "/models"
+	// Determine the correct endpoint based on provider type
+	var url string
+	switch p.name {
+	case "ollama":
+		url = p.cfg.BaseURL + "/api/tags"
+	case "lmstudio":
+		// LM Studio base URL already includes /v1
+		url = p.cfg.BaseURL + "/models"
+	default:
+		// OpenAI, Mistral, etc. - base URL already includes /v1
+		url = p.cfg.BaseURL + "/models"
+	}
 
 	httpReq, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -242,4 +283,87 @@ func (p *OpenAICompatProvider) TestConnection() (string, bool, error) {
 		return "API returned status: " + resp.Status, false, nil
 	}
 	return "Connected successfully", true, nil
+}
+
+func (p *OpenAICompatProvider) FetchModels() ([]string, error) {
+	// Determine the models endpoint based on provider type
+	var url string
+	switch p.name {
+	case "ollama":
+		url = p.cfg.BaseURL + "/api/tags"
+	case "lmstudio":
+		// LM Studio - append /v1/models to ensure correct endpoint
+		baseURL := p.cfg.BaseURL
+		if !strings.HasSuffix(baseURL, "/v1") {
+			baseURL = strings.TrimSuffix(baseURL, "/") + "/v1"
+		}
+		url = baseURL + "/models"
+	default:
+		// OpenAI, Mistral, etc. - base URL already includes /v1
+		url = p.cfg.BaseURL + "/models"
+	}
+
+	log.Printf("[%s] FetchModels URL: %s", p.name, url)
+
+	httpReq, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	p.setHeaders(httpReq)
+
+	log.Printf("[%s] FetchModels headers: %v", p.name, httpReq.Header)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	log.Printf("[%s] FetchModels response status: %s", p.name, resp.Status)
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("API returned status: %s", resp.Status)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf("[%s] FetchModels response body: %s", p.name, string(body))
+
+	// Parse the response based on provider type
+	var models []string
+
+	switch p.name {
+	case "ollama":
+		// Ollama: {"models": [{"name": "llama3.2:latest", ...}]}
+		var ollamaResp struct {
+			Models []struct {
+				Name string `json:"name"`
+			} `json:"models"`
+		}
+		if err := json.Unmarshal(body, &ollamaResp); err != nil {
+			return nil, err
+		}
+		for _, m := range ollamaResp.Models {
+			models = append(models, m.Name)
+		}
+	default:
+		// OpenAI-compatible: {"data": [{"id": "gpt-4", ...}]}
+		var openaiResp struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(body, &openaiResp); err != nil {
+			return nil, err
+		}
+		for _, m := range openaiResp.Data {
+			models = append(models, m.ID)
+		}
+	}
+
+	return models, nil
 }
