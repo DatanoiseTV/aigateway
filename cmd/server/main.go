@@ -50,6 +50,7 @@ var (
 	commit    = "unknown"
 	buildTime = "unknown"
 	setupMode = flag.Bool("setup", false, "Run setup wizard")
+	resetPw   = flag.String("reset-password", "", "Reset admin password to the specified value")
 )
 
 func main() {
@@ -58,6 +59,22 @@ func main() {
 	flag.Parse()
 
 	printBanner()
+
+	// Handle password reset flag
+	if *resetPw != "" {
+		cfg, err := config.Load(*configPath)
+		if err != nil {
+			log.Fatalf("Failed to load config: %v", err)
+		}
+		if err := config.ResetAdminPassword(cfg, *resetPw); err != nil {
+			log.Fatalf("Failed to reset password: %v", err)
+		}
+		if err := config.SaveConfig(cfg, *configPath); err != nil {
+			log.Fatalf("Failed to save config: %v", err)
+		}
+		fmt.Printf("Admin password has been reset to: %s\n", *resetPw)
+		return
+	}
 
 	if err := logger.Init(false); err != nil {
 		log.Printf("Failed to init logger, using silent: %v", err)

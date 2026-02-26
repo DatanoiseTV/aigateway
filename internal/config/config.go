@@ -333,6 +333,16 @@ func SaveConfig(cfg *Config, path string) error {
 	return saveConfig(cfg, path)
 }
 
+// ResetAdminPassword generates a new password hash for the admin user
+func ResetAdminPassword(cfg *Config, password string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+	cfg.Admin.PasswordHash = string(hash)
+	return nil
+}
+
 func generateRandomString(length int) string {
 	b := make([]byte, length)
 	rand.Read(b)

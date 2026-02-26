@@ -7,7 +7,7 @@ server:
         key_file: ""
 admin:
     username: admin
-    password_hash: $2a$10$4XSqLvs1o0Oi8jVyhDQIYOG5a5/5/EAubMVNWZLGu0VF9t2b0vd6K
+    password_hash: $2a$10$7Va1tV6kt9oMzXuSb.MmdumZ0mnd4yq6VQN5HwTJyPZsXQXthHD3W
     session_secret: e29ad02fae8192569b578627528aead9
 providers: {}
 defaults:
@@ -30,3 +30,6 @@ prometheus:
     enabled: true
     username: prometheus
     password: 5247d2af36d4bf7d0260
+server_tools:
+    enabled: false
+    tools: []
