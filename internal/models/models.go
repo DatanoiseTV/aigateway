@@ -23,7 +23,11 @@ type Client struct {
 	// BackendModels is a JSON array of available models fetched from the backend
 	BackendModels string `gorm:"type:text" json:"backend_models,omitempty"`
 	// SystemPrompt is an optional system prompt prepended to every request from this client
-	SystemPrompt         string `gorm:"type:text" json:"system_prompt,omitempty"`
+	SystemPrompt string `gorm:"type:text" json:"system_prompt,omitempty"`
+	// ToolMode determines how tool calls are handled:
+	// - "pass-through" (default): gateway forwards tool_calls to client, client executes
+	// - "gateway": gateway attempts to execute tools internally
+	ToolMode             string `gorm:"type:varchar(20);default:'pass-through'" json:"tool_mode"`
 	RateLimitMinute      int    `gorm:"default:60" json:"rate_limit_minute"`
 	RateLimitHour        int    `gorm:"default:1000" json:"rate_limit_hour"`
 	RateLimitDay         int    `gorm:"default:10000" json:"rate_limit_day"`

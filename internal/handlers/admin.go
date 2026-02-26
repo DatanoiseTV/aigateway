@@ -236,6 +236,7 @@ func (h *AdminHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 	backendBaseURL := r.Form.Get("backend_base_url")
 	backendDefaultModel := r.Form.Get("backend_default_model")
 	systemPrompt := r.Form.Get("system_prompt")
+	toolMode := r.Form.Get("tool_mode")
 
 	if name == "" {
 		http.Error(w, "Name is required", http.StatusBadRequest)
@@ -249,6 +250,7 @@ func (h *AdminHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 		client.BackendBaseURL = backendBaseURL
 		client.BackendDefaultModel = backendDefaultModel
 		client.SystemPrompt = systemPrompt
+		client.ToolMode = toolMode
 		h.clientService.UpdateClient(client)
 	}
 	if err != nil {
@@ -302,6 +304,7 @@ func (h *AdminHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	backendBaseURL := r.Form.Get("backend_base_url")
 	backendDefaultModel := r.Form.Get("backend_default_model")
 	systemPrompt := r.Form.Get("system_prompt")
+	toolMode := r.Form.Get("tool_mode")
 	rateLimitMinute := parseInt(r.Form.Get("rate_limit_minute"), 60)
 	rateLimitHour := parseInt(r.Form.Get("rate_limit_hour"), 1000)
 	rateLimitDay := parseInt(r.Form.Get("rate_limit_day"), 10000)
@@ -326,6 +329,7 @@ func (h *AdminHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 	client.BackendBaseURL = backendBaseURL
 	client.BackendDefaultModel = backendDefaultModel
 	client.SystemPrompt = systemPrompt
+	client.ToolMode = toolMode
 	client.RateLimitMinute = rateLimitMinute
 	client.RateLimitHour = rateLimitHour
 	client.RateLimitDay = rateLimitDay
@@ -1621,6 +1625,14 @@ var adminTemplates = []byte(`
                         <label class="block text-gray-400 text-sm font-medium mb-2">System Prompt</label>
                         <textarea name="system_prompt" rows="3" placeholder="Injected as system message on every request from this client" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">{{(index .Data "Client").SystemPrompt}}</textarea>
                         <p class="text-gray-500 text-xs mt-1">Prepended before the user's messages. Leave empty to disable.</p>
+                    </div>
+                    <div class="mb-6">
+                        <label class="block text-gray-400 text-sm font-medium mb-2">Tool Mode</label>
+                        <select name="tool_mode" class="w-full px-4 py-2 bg-gray-900 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="pass-through" {{if or (eq (index .Data "Client").ToolMode "pass-through" (index .Data "Client").ToolMode "")}}selected{{end}}>Pass-through (forward to client)</option>
+                            <option value="gateway" {{if eq (index .Data "Client").ToolMode "gateway"}}selected{{end}}>Gateway (execute tools internally)</option>
+                        </select>
+                        <p class="text-gray-500 text-xs mt-1">Pass-through forwards tool_calls to the client (opencode) for execution.</p>
                     </div>
 
                     <!-- Model Whitelist -->

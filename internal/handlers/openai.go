@@ -336,6 +336,48 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 
 		log.Printf("[CHAT] %s tool calls detected: %d", provider.Name(), len(toolCalls))
 
+		// Check if tool mode is pass-through (forward tool_calls to client)
+		if client.ToolMode == "pass-through" {
+			log.Printf("[CHAT] %s passing tool_calls to client (ToolMode=pass-through)", provider.Name())
+			// Build response with tool_calls for the client to handle
+			toolCallsResp := make([]map[string]interface{}, len(toolCalls))
+			for i, tc := range toolCalls {
+				toolCallsResp[i] = map[string]interface{}{
+					"id":   tc.ID,
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":      tc.Name,
+						"arguments": tc.Arguments,
+					},
+				}
+			}
+			response := OpenAIChatResponse{
+				ID:      "chatcmpl-" + randomID(12),
+				Object:  "chat.completion",
+				Created: time.Now().Unix(),
+				Model:   req.Model,
+				Choices: []map[string]interface{}{
+					{
+						"index": 0,
+						"message": map[string]interface{}{
+							"role":       "assistant",
+							"content":    nil,
+							"tool_calls": toolCallsResp,
+						},
+						"finish_reason": "tool_calls",
+					},
+				},
+				Usage: map[string]interface{}{
+					"prompt_tokens":     0,
+					"completion_tokens": 0,
+					"total_tokens":      0,
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
 		// Execute each tool and add results to messages
 		for _, tc := range toolCalls {
 			log.Printf("[CHAT] Executing tool: %s with args: %s", tc.Name, tc.Arguments)
@@ -432,7 +474,7 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Request, client *models.Client, req OpenAIChatRequest, provider providers.Provider, chatReq *providers.ChatRequest) {
 	start := time.Now()
 
-	log.Printf("[CHAT] %s calling ChatCompletionStream with model: %s", provider.Name(), chatReq.Model)
+	log.Printf("[CHAT] %s calling ChatCompletionStream with model: %s, ToolMode: %q", provider.Name(), chatReq.Model, client.ToolMode)
 
 	resp, err := provider.ChatCompletionStream(chatReq)
 	if err != nil {
@@ -483,6 +525,7 @@ func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Re
 	prefix := provider.StreamDataPrefix()
 	var inputTokens, outputTokens int
 	chunkCount := 0
+	var totalText strings.Builder
 
 	maxToolIterations := 5
 toolLoop:
@@ -571,6 +614,7 @@ toolLoop:
 			if text != "" && !inToolCall {
 				chunkCount++
 				accumulatedText.WriteString(text)
+				totalText.WriteString(text)
 				sendSSEChunk(w, flusher, responseID, req.Model, created, map[string]interface{}{"content": text}, nil)
 			}
 		}
@@ -580,7 +624,41 @@ toolLoop:
 			break toolLoop
 		}
 
-		// Execute the tool
+		// Check if tool mode is pass-through (forward tool_calls to client)
+		if client.ToolMode == "pass-through" {
+			log.Printf("[CHAT] %s tool call detected, passing through to client (ToolMode=pass-through)", provider.Name())
+			// Send tool_calls in a chunk and end stream - client will handle execution
+			toolCallsChunk := map[string]interface{}{
+				"tool_calls": []map[string]interface{}{
+					{
+						"id":    toolCallID,
+						"index": 0,
+						"type":  "function",
+						"function": map[string]interface{}{
+							"name":      toolCallName,
+							"arguments": toolCallArgs,
+						},
+					},
+				},
+			}
+			sendSSEChunk(w, flusher, responseID, req.Model, created, toolCallsChunk, nil)
+			// End the stream with finish_reason: tool_calls
+			finishChunk := map[string]interface{}{
+				"choices": []map[string]interface{}{
+					{
+						"index":         0,
+						"delta":         map[string]interface{}{},
+						"finish_reason": "tool_calls",
+					},
+				},
+			}
+			sendSSEChunk(w, flusher, responseID, req.Model, created, finishChunk, nil)
+			fmt.Fprintf(w, "data: [DONE]\n\n")
+			flusher.Flush()
+			return
+		}
+
+		// Execute the tool (gateway mode)
 		log.Printf("[CHAT] %s executing tool: %s with args: %s", provider.Name(), toolCallName, toolCallArgs)
 
 		// Add assistant's tool call message first
@@ -637,6 +715,13 @@ toolLoop:
 	}
 
 	latencyMs := int(time.Since(start).Milliseconds())
+
+	// Estimate tokens if not provided by provider (e.g., LM Studio doesn't send usage in stream)
+	if outputTokens == 0 && totalText.Len() > 0 {
+		outputTokens = totalText.Len() / 4
+		log.Printf("[CHAT] Estimated output tokens: %d (from %d chars)", outputTokens, totalText.Len())
+	}
+
 	log.Printf("[CHAT] Stream completed: %d chunks, %d input tokens, %d output tokens, latency: %dms", chunkCount, inputTokens, outputTokens, latencyMs)
 
 	// Send the final stop chunk with usage info
