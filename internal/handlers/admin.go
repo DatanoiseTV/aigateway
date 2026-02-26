@@ -39,6 +39,7 @@ func KnownProviderTypes() []string {
 		"azure-openai",
 		"ollama",
 		"lmstudio",
+		"vllm",
 	}
 }
 
