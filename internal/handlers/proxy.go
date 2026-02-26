@@ -16,10 +16,11 @@ import (
 
 type ProxyHandler struct {
 	geminiService *services.GeminiService
+	statsService  *services.StatsService
 }
 
-func NewProxyHandler(geminiService *services.GeminiService) *ProxyHandler {
-	return &ProxyHandler{geminiService: geminiService}
+func NewProxyHandler(geminiService *services.GeminiService, statsService *services.StatsService) *ProxyHandler {
+	return &ProxyHandler{geminiService: geminiService, statsService: statsService}
 }
 
 func (h *ProxyHandler) RegisterRoutes(r chi.Router) {
@@ -55,10 +56,17 @@ func (h *ProxyHandler) GenerateContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.statsService != nil {
+		h.statsService.IncrementRequestsInProgress()
+	}
+
 	if err := h.enforceRequestLimits(client, body); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Error-Code", "REQUEST_LIMIT_EXCEEDED")
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		if h.statsService != nil {
+			h.statsService.DecrementRequestsInProgress()
+		}
 		return
 	}
 
@@ -76,6 +84,10 @@ func (h *ProxyHandler) GenerateContent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.geminiService.LogRequest(client.ID, model, statusCode, inputTokens, outputTokens, latencyMs, errMsg, string(body), false, false)
+
+	if h.statsService != nil {
+		h.statsService.DecrementRequestsInProgress()
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-RateLimit-Limit-Minute", string(rune(client.RateLimitMinute)))
@@ -156,8 +168,15 @@ func (h *ProxyHandler) StreamGenerateContent(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if h.statsService != nil {
+		h.statsService.IncrementRequestsInProgress()
+	}
+
 	if err := h.enforceRequestLimits(client, body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		if h.statsService != nil {
+			h.statsService.DecrementRequestsInProgress()
+		}
 		return
 	}
 
@@ -204,6 +223,10 @@ func (h *ProxyHandler) StreamGenerateContent(w http.ResponseWriter, r *http.Requ
 		if err != nil {
 			break
 		}
+	}
+
+	if h.statsService != nil {
+		h.statsService.DecrementRequestsInProgress()
 	}
 }
 

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"sync/atomic"
 	"time"
 
 	"ai-gateway/internal/models"
@@ -9,11 +10,24 @@ import (
 )
 
 type StatsService struct {
-	db *gorm.DB
+	db                 *gorm.DB
+	requestsInProgress atomic.Int64
 }
 
 func NewStatsService(db *gorm.DB) *StatsService {
 	return &StatsService{db: db}
+}
+
+func (s *StatsService) IncrementRequestsInProgress() {
+	s.requestsInProgress.Add(1)
+}
+
+func (s *StatsService) DecrementRequestsInProgress() {
+	s.requestsInProgress.Add(-1)
+}
+
+func (s *StatsService) GetRequestsInProgress() int64 {
+	return s.requestsInProgress.Load()
 }
 
 func (s *StatsService) GetGlobalStats() (*models.Stats, error) {

@@ -187,6 +187,9 @@ func (h *DashboardHub) buildPayload() []byte {
 			"output_tokens": l.OutputTokens,
 			"latency_ms":    l.LatencyMs,
 			"created_at":    l.CreatedAt.Format("Jan 02, 2006 15:04"),
+			"is_streaming":  l.IsStreaming,
+			"has_tools":     l.HasTools,
+			"request_body":  l.RequestBody != "",
 		}
 	}
 
@@ -199,6 +202,7 @@ func (h *DashboardHub) buildPayload() []byte {
 			"active_clients":            stats.ActiveClients,
 			"total_clients":             stats.TotalClients,
 			"error_rate":                stats.ErrorRate,
+			"requests_in_progress":      h.statsService.GetRequestsInProgress(),
 		},
 		RecentLogs:  logMaps,
 		ModelUsage:  modelUsage,

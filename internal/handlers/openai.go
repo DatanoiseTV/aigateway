@@ -24,12 +24,13 @@ import (
 type OpenAIHandler struct {
 	geminiService *services.GeminiService
 	clientService *services.ClientService
+	statsService  *services.StatsService
 	registry      *providers.Registry
 	toolService   *services.ToolService
 }
 
-func NewOpenAIHandler(geminiService *services.GeminiService, clientService *services.ClientService, registry *providers.Registry, toolService *services.ToolService) *OpenAIHandler {
-	return &OpenAIHandler{geminiService: geminiService, clientService: clientService, registry: registry, toolService: toolService}
+func NewOpenAIHandler(geminiService *services.GeminiService, clientService *services.ClientService, statsService *services.StatsService, registry *providers.Registry, toolService *services.ToolService) *OpenAIHandler {
+	return &OpenAIHandler{geminiService: geminiService, clientService: clientService, statsService: statsService, registry: registry, toolService: toolService}
 }
 
 func (h *OpenAIHandler) RegisterRoutes(r chi.Router) {
@@ -187,6 +188,10 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "Failed to read request body", "invalid_request_error")
 		return
+	}
+
+	if h.statsService != nil {
+		h.statsService.IncrementRequestsInProgress()
 	}
 
 	var req OpenAIChatRequest
@@ -445,6 +450,10 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 
 	responseText, inputTokens, outputTokens, _ := provider.ParseResponse(respBody)
 	h.geminiService.LogRequest(client.ID, chatReq.Model, statusCode, inputTokens, outputTokens, latencyMs, "", requestBody, chatReq.Stream, len(chatReq.Tools) > 0)
+
+	if h.statsService != nil {
+		h.statsService.DecrementRequestsInProgress()
+	}
 
 	responseID := "chatcmpl-" + randomID(12)
 	log.Printf("[CHAT] Sending response: text length=%d", len(responseText))
@@ -761,6 +770,10 @@ toolLoop:
 
 	// Log the request after streaming completes
 	h.geminiService.LogRequest(client.ID, chatReq.Model, resp.StatusCode, inputTokens, outputTokens, latencyMs, "", requestBody, chatReq.Stream, len(chatReq.Tools) > 0)
+
+	if h.statsService != nil {
+		h.statsService.DecrementRequestsInProgress()
+	}
 
 	// Update client models if not already cached
 	if client.BackendModels == "" {

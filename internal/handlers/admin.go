@@ -850,7 +850,20 @@ var adminTemplates = []byte(`
 
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <!-- Stats Grid -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-400 text-sm font-medium">In Progress</p>
+                        <p id="stat-in-progress" class="text-3xl font-bold text-white mt-1">0</p>
+                    </div>
+                    <div class="w-12 h-12 bg-yellow-500/20 rounded-xl flex items-center justify-center">
+                        <svg class="w-6 h-6 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                    </div>
+                </div>
+            </div>
             <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
                 <div class="flex items-center justify-between">
                     <div>
@@ -1041,6 +1054,9 @@ var adminTemplates = []byte(`
             document.getElementById('stat-input-tokens').textContent = (stats.total_input_tokens_today / 1000).toFixed(1) + 'k';
             document.getElementById('stat-output-tokens').textContent = (stats.total_output_tokens_today / 1000).toFixed(1) + 'k';
             document.getElementById('stat-active-clients').textContent = stats.active_clients;
+            if (stats.requests_in_progress !== undefined) {
+                document.getElementById('stat-in-progress').textContent = stats.requests_in_progress;
+            }
         }
 
         function updateRecentLogs(logs) {
