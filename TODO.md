@@ -1,8 +1,20 @@
 # TODO - AI Gateway
 
-## 2026-02-25
+## 2026-02-26
 
 ### Completed
+- [x] Add HTTP connection pooling for better performance
+- [x] Add debug logging for WebSocket dashboard updates
+- [x] Fix tool_call_id handling in message parsing for tool results
+- [x] Replace chi request logger with zap, suppress HTTP request logging
+- [x] Fix template error with formatDuration for float64 values
+- [x] Add real-time request tracking with in-progress counter
+- [x] Add streaming and tools badges to request logs
+- [x] Remove mini charts from dashboard, keep runtime human-readable
+- [x] Add request body logging and human-readable runtime display
+- [x] Remove Quick Stats section, fix mini chart IDs, change latency to runtime
+- [x] Redesign dashboard with compact model usage bars
+- [x] Add ARCHITECTURE.md documenting project structure
 - [x] Add key type selection (gm_, sk-, sk-ant-) when creating client
 - [x] Add key type dropdown to create client modal
 - [x] Add key type selection to regenerate key function
