@@ -993,9 +993,11 @@ var adminTemplates = []byte(`
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">{{.InputTokens}} / {{.OutputTokens}}</td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">{{formatDuration .LatencyMs}}</td>
                             <td class="px-6 py-4 whitespace-nowrap">
-                                {{if .IsStreaming}}<span class="text-xs px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded mr-1">stream</span>{{end}}
-                                {{if .HasTools}}<span class="text-xs px-1.5 py-0.5 bg-orange-500/20 text-orange-400 rounded mr-1">tools</span>{{end}}
-                                {{if .RequestBody}}<span class="text-xs px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded">body</span>{{end}}
+                                <div class="flex items-center gap-1">
+                                    {{if .IsStreaming}}<span class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>stream</span>{{end}}
+                                    {{if .HasTools}}<span class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 bg-orange-500/20 text-orange-400 rounded"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/></svg>tools</span>{{end}}
+                                    {{if .RequestBody}}<button onclick="showRequestBody('{{js .RequestBody}}')" class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded hover:bg-blue-500/30"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>view</button>{{end}}
+                                </div>
                         </tr>
                         {{else}}
                         <tr>
@@ -1101,13 +1103,27 @@ var adminTemplates = []byte(`
 
         // WebSocket connection for real-time updates
         function connectWS() {
+            console.log('[WS] Connecting to dashboard WebSocket...');
             var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            var ws = new WebSocket(proto + '//' + location.host + '/admin/ws');
+            var wsUrl = proto + '//' + location.host + '/admin/ws';
+            console.log('[WS] URL:', wsUrl);
+            var ws = new WebSocket(wsUrl);
 
+            ws.onopen = function() {
+                console.log('[WS] Connected successfully');
+            };
+            ws.onerror = function(err) {
+                console.error('[WS] Error:', err);
+            };
+            ws.onclose = function(e) {
+                console.log('[WS] Closed:', e.code, e.reason);
+            };
             ws.onmessage = function(event) {
+                console.log('[WS] Received message');
                 try {
                     var msg = JSON.parse(event.data);
                     if (msg.type === 'stats_update') {
+                        console.log('[WS] Stats update:', msg.stats);
                         updateStats(msg.stats);
                         updateRecentLogs(msg.recent_logs);
                         updateChart(msg.model_usage);

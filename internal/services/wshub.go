@@ -95,6 +95,7 @@ func (h *DashboardHub) NotifyUpdate() {
 	if h.clientCount() == 0 {
 		return
 	}
+	log.Printf("[WS] NotifyUpdate called, clients: %d", h.clientCount())
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -118,6 +119,8 @@ func (h *DashboardHub) broadcast() {
 	if payload == nil {
 		return
 	}
+
+	log.Printf("[WS] Broadcasting to %d clients", h.clientCount())
 
 	h.mu.RLock()
 	defer h.mu.RUnlock()

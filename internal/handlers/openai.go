@@ -197,6 +197,9 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 	var req OpenAIChatRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "Invalid JSON in request body", "invalid_request_error")
+		if h.statsService != nil {
+			h.statsService.DecrementRequestsInProgress()
+		}
 		return
 	}
 
@@ -204,6 +207,9 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		log.Printf("[CHAT] Provider error for client %s: %v", client.Name, err)
 		writeOpenAIError(w, http.StatusBadRequest, "Backend not configured: "+err.Error(), "invalid_request_error")
+		if h.statsService != nil {
+			h.statsService.DecrementRequestsInProgress()
+		}
 		return
 	}
 
@@ -214,6 +220,9 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 
 	if len(chatReq.Messages) == 0 {
 		writeOpenAIError(w, http.StatusBadRequest, "No content in messages", "invalid_request_error")
+		if h.statsService != nil {
+			h.statsService.DecrementRequestsInProgress()
+		}
 		return
 	}
 
@@ -353,6 +362,9 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 	if err != nil {
 		log.Printf("[CHAT] %s request error: %v", provider.Name(), err)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream request failed: "+err.Error(), "api_error")
+		if h.statsService != nil {
+			h.statsService.DecrementRequestsInProgress()
+		}
 		return
 	}
 
@@ -363,6 +375,9 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 		log.Printf("[CHAT] %s error: %s", provider.Name(), errMsg)
 		httpStatus := mapUpstreamStatusToHTTP(statusCode)
 		writeOpenAIError(w, httpStatus, errMsg, "api_error")
+		if h.statsService != nil {
+			h.statsService.DecrementRequestsInProgress()
+		}
 		return
 	}
 
@@ -534,6 +549,9 @@ func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		log.Printf("[CHAT] %s stream error: %v", provider.Name(), err)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream request failed: "+err.Error(), "api_error")
+		if h.statsService != nil {
+			h.statsService.DecrementRequestsInProgress()
+		}
 		return
 	}
 	defer resp.Body.Close()
@@ -550,6 +568,9 @@ func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Re
 		log.Printf("[CHAT] %s error: %s", provider.Name(), errMsg)
 		httpStatus := mapUpstreamStatusToHTTP(resp.StatusCode)
 		writeOpenAIError(w, httpStatus, errMsg, "api_error")
+		if h.statsService != nil {
+			h.statsService.DecrementRequestsInProgress()
+		}
 		return
 	}
 
@@ -566,6 +587,9 @@ func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Re
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		log.Printf("[CHAT] ResponseWriter does not implement http.Flusher")
+		if h.statsService != nil {
+			h.statsService.DecrementRequestsInProgress()
+		}
 		return
 	}
 
