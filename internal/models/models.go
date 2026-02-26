@@ -52,6 +52,8 @@ type RequestLog struct {
 	LatencyMs    int       `json:"latency_ms"`
 	ErrorMessage string    `gorm:"type:text" json:"error_message"`
 	RequestBody  string    `gorm:"type:text" json:"request_body"`
+	IsStreaming  bool      `gorm:"default:false" json:"is_streaming"`
+	HasTools     bool      `gorm:"default:false" json:"has_tools"`
 	CreatedAt    time.Time `gorm:"index" json:"created_at"`
 }
 

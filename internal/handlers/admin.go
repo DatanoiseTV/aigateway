@@ -966,6 +966,8 @@ var adminTemplates = []byte(`
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">{{.InputTokens}} / {{.OutputTokens}}</td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">{{formatDuration .LatencyMs}}</td>
                             <td class="px-6 py-4 whitespace-nowrap">
+                                {{if .IsStreaming}}<span class="text-xs px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded mr-1">stream</span>{{end}}
+                                {{if .HasTools}}<span class="text-xs px-1.5 py-0.5 bg-orange-500/20 text-orange-400 rounded mr-1">tools</span>{{end}}
                                 {{if .RequestBody}}<span class="text-xs px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded">body</span>{{end}}
                         </tr>
                         {{else}}
@@ -1057,6 +1059,11 @@ var adminTemplates = []byte(`
                 html += '<td class="px-6 py-4 whitespace-nowrap"><span class="px-2 py-1 text-xs font-medium rounded-full ' + statusClass + '">' + l.status_code + '</span></td>';
                 html += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">' + l.input_tokens + ' / ' + l.output_tokens + '</td>';
                 html += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">' + formatDuration(l.latency_ms) + '</td>';
+                html += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">';
+                if (l.is_streaming) html += '<span class="text-xs px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded mr-1">stream</span>';
+                if (l.has_tools) html += '<span class="text-xs px-1.5 py-0.5 bg-orange-500/20 text-orange-400 rounded mr-1">tools</span>';
+                if (l.request_body) html += '<span class="text-xs px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded">body</span>';
+                html += '</td>';
                 html += '</tr>';
             });
             tbody.innerHTML = html;

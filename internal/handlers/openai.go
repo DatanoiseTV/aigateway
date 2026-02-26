@@ -444,7 +444,7 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 	}
 
 	responseText, inputTokens, outputTokens, _ := provider.ParseResponse(respBody)
-	h.geminiService.LogRequest(client.ID, chatReq.Model, statusCode, inputTokens, outputTokens, latencyMs, "", requestBody)
+	h.geminiService.LogRequest(client.ID, chatReq.Model, statusCode, inputTokens, outputTokens, latencyMs, "", requestBody, chatReq.Stream, len(chatReq.Tools) > 0)
 
 	responseID := "chatcmpl-" + randomID(12)
 	log.Printf("[CHAT] Sending response: text length=%d", len(responseText))
@@ -760,7 +760,7 @@ toolLoop:
 	flusher.Flush()
 
 	// Log the request after streaming completes
-	h.geminiService.LogRequest(client.ID, chatReq.Model, resp.StatusCode, inputTokens, outputTokens, latencyMs, "", requestBody)
+	h.geminiService.LogRequest(client.ID, chatReq.Model, resp.StatusCode, inputTokens, outputTokens, latencyMs, "", requestBody, chatReq.Stream, len(chatReq.Tools) > 0)
 
 	// Update client models if not already cached
 	if client.BackendModels == "" {

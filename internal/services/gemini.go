@@ -180,7 +180,7 @@ func (s *GeminiService) ForwardStreamRequest(model string, body []byte) (*http.R
 	return resp, model, nil
 }
 
-func (s *GeminiService) LogRequest(clientID, model string, statusCode int, inputTokens, outputTokens int, latencyMs int, errMsg string, requestBody string) error {
+func (s *GeminiService) LogRequest(clientID, model string, statusCode int, inputTokens, outputTokens int, latencyMs int, errMsg string, requestBody string, isStreaming bool, hasTools bool) error {
 	log := &models.RequestLog{
 		ClientID:     clientID,
 		Model:        model,
@@ -190,6 +190,8 @@ func (s *GeminiService) LogRequest(clientID, model string, statusCode int, input
 		LatencyMs:    latencyMs,
 		ErrorMessage: errMsg,
 		RequestBody:  requestBody,
+		IsStreaming:  isStreaming,
+		HasTools:     hasTools,
 		CreatedAt:    time.Now(),
 	}
 

@@ -75,7 +75,7 @@ func (h *ProxyHandler) GenerateContent(w http.ResponseWriter, r *http.Request) {
 		errMsg = err.Error()
 	}
 
-	h.geminiService.LogRequest(client.ID, model, statusCode, inputTokens, outputTokens, latencyMs, errMsg, string(body))
+	h.geminiService.LogRequest(client.ID, model, statusCode, inputTokens, outputTokens, latencyMs, errMsg, string(body), false, false)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-RateLimit-Limit-Minute", string(rune(client.RateLimitMinute)))
