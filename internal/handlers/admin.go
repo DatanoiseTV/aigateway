@@ -942,22 +942,6 @@ var adminTemplates = []byte(`
                 </div>
             </div>
         </div>
-
-        <!-- Mini Charts Row -->
-        <div id="miniChartsRow" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
-                <p class="text-gray-400 text-xs mb-1">Input Tokens Trend</p>
-                <canvas id="miniInputChart" height="60"></canvas>
-            </div>
-            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
-                <p class="text-gray-400 text-xs mb-1">Output Tokens Trend</p>
-                <canvas id="miniOutputChart" height="60"></canvas>
-            </div>
-            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
-                <p class="text-gray-400 text-xs mb-1">Clients Trend</p>
-                <canvas id="miniClientsChart" height="60"></canvas>
-            </div>
-        </div>
         
         <!-- Charts Row - Compact Model Usage -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
