@@ -142,10 +142,11 @@ func (h *DashboardHub) sendStatsTo(conn *websocket.Conn) {
 
 // DashboardPayload is the JSON structure sent over WebSocket to the dashboard.
 type DashboardPayload struct {
-	Type       string                   `json:"type"`
-	Stats      map[string]interface{}   `json:"stats"`
-	RecentLogs []map[string]interface{} `json:"recent_logs"`
-	ModelUsage map[string]int           `json:"model_usage"`
+	Type        string                   `json:"type"`
+	Stats       map[string]interface{}   `json:"stats"`
+	RecentLogs  []map[string]interface{} `json:"recent_logs"`
+	ModelUsage  map[string]int           `json:"model_usage"`
+	ClientStats map[string]interface{}   `json:"client_stats"`
 }
 
 func (h *DashboardHub) buildPayload() []byte {
@@ -158,13 +159,21 @@ func (h *DashboardHub) buildPayload() []byte {
 	recentLogs, err := h.statsService.GetRecentRequests("", 20)
 	if err != nil {
 		log.Printf("[WS] Failed to get recent requests: %v", err)
-		return nil
 	}
 
 	modelUsage, err := h.statsService.GetModelUsage()
 	if err != nil {
 		log.Printf("[WS] Failed to get model usage: %v", err)
-		return nil
+	}
+
+	clientStats, _ := h.statsService.GetAllClientStats()
+	clientStatsMap := make(map[string]interface{})
+	for _, cs := range clientStats {
+		clientStatsMap[cs.ClientID] = map[string]interface{}{
+			"requests_today": cs.RequestsToday,
+			"input_tokens":   cs.InputTokensToday,
+			"output_tokens":  cs.OutputTokensToday,
+		}
 	}
 
 	// Convert request logs to serializable maps
@@ -191,8 +200,9 @@ func (h *DashboardHub) buildPayload() []byte {
 			"total_clients":             stats.TotalClients,
 			"error_rate":                stats.ErrorRate,
 		},
-		RecentLogs: logMaps,
-		ModelUsage: modelUsage,
+		RecentLogs:  logMaps,
+		ModelUsage:  modelUsage,
+		ClientStats: clientStatsMap,
 	}
 
 	data, err := json.Marshal(payload)

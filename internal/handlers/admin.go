@@ -86,6 +86,9 @@ func NewAdminHandler(cfg *config.Config, clientService *services.ClientService, 
 
 func (h *AdminHandler) RegisterRoutes(r *chi.Mux) {
 	r.Group(func(r chi.Router) {
+		r.Get("/admin", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/admin/dashboard", http.StatusFound)
+		})
 		r.Get("/admin/login", h.ShowLogin)
 		r.Post("/admin/login", h.HandleLogin)
 		r.Post("/admin/logout", h.HandleLogout)
@@ -1062,7 +1065,8 @@ var adminTemplates = []byte(`
         }
 
         // Mini charts for last 5 minutes
-        var recentStats = {{toJson (index .Data "RecentStats")}};
+        var recentStatsRaw = {{toJson (index .Data "RecentStats")}};
+        var recentStats = Array.isArray(recentStatsRaw) ? recentStatsRaw : [];
         
         // Poll for real-time stats every 2 seconds as backup to WebSocket
         function pollStats() {
@@ -1129,7 +1133,7 @@ var adminTemplates = []byte(`
 
         // Initialize chart with server-rendered data, then connect WS
         initChart({{(index .Data "ModelUsage")}});
-        initMiniChart();
+        initMiniCharts();
         connectWS();
     </script>
 </body>
@@ -1409,6 +1413,53 @@ var adminTemplates = []byte(`
     </nav>
 
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <script>
+        var clientID = "{{(index .Data "Client").ID}}";
+        
+        function connectWS() {
+            var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            var ws = new WebSocket(proto + '//' + location.host + '/admin/ws');
+
+            ws.onmessage = function(event) {
+                try {
+                    var msg = JSON.parse(event.data);
+                    if (msg.type === 'stats_update') {
+                        // Check if this update is for our client
+                        if (msg.client_stats && msg.client_stats[clientID]) {
+                            var s = msg.client_stats[clientID];
+                            document.getElementById('client-requests').textContent = s.requests_today;
+                            document.getElementById('client-input').textContent = s.input_tokens.toLocaleString();
+                            document.getElementById('client-output').textContent = s.output_tokens.toLocaleString();
+                        }
+                    }
+                } catch (e) {
+                    console.error('WS parse error:', e);
+                }
+            };
+
+            ws.onclose = function() {
+                setTimeout(connectWS, 3000);
+            };
+
+            ws.onerror = function() {
+                ws.close();
+            };
+        }
+        
+        // Also poll as fallback
+        (function pollClientStats() {
+            fetch('/admin/stats/api')
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    // Could add client-specific stats here if available
+                })
+                .catch(function() {});
+            setTimeout(pollClientStats, 3000);
+        })();
+        
+        connectWS();
+        </script>
+        
         <!-- Stats Cards -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
@@ -1418,7 +1469,7 @@ var adminTemplates = []byte(`
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                     </svg>
                 </div>
-                <p class="text-3xl font-bold text-white">{{(index .Data "Stats").RequestsToday}}</p>
+                <p id="client-requests" class="text-3xl font-bold text-white">{{(index .Data "Stats").RequestsToday}}</p>
                 <div class="mt-2 bg-gray-700 rounded-full h-2">
                     <div class="bg-blue-500 h-2 rounded-full transition-all" style="width: {{percentUsed (index .Data "Stats").RequestsToday (index .Data "Stats").RequestsLimit}}%"></div>
                 </div>
@@ -1428,11 +1479,11 @@ var adminTemplates = []byte(`
             <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
                 <div class="flex items-center justify-between mb-4">
                     <h3 class="text-gray-400 text-sm font-medium">Input Tokens</h3>
-                    <svg class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-5 h-5 text-green="none" stroke-500" fill="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
                     </svg>
                 </div>
-                <p class="text-3xl font-bold text-white">{{formatInt (index .Data "Stats").InputTokensToday}}</p>
+                <p id="client-input" class="text-3xl font-bold text-white">{{formatInt (index .Data "Stats").InputTokensToday}}</p>
                 <div class="mt-2 bg-gray-700 rounded-full h-2">
                     <div class="bg-green-500 h-2 rounded-full transition-all" style="width: {{percentUsed (index .Data "Stats").InputTokensToday (index .Data "Stats").InputTokensLimit}}%"></div>
                 </div>
@@ -1446,7 +1497,7 @@ var adminTemplates = []byte(`
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                     </svg>
                 </div>
-                <p class="text-3xl font-bold text-white">{{formatInt (index .Data "Stats").OutputTokensToday}}</p>
+                <p id="client-output" class="text-3xl font-bold text-white">{{formatInt (index .Data "Stats").OutputTokensToday}}</p>
                 <div class="mt-2 bg-gray-700 rounded-full h-2">
                     <div class="bg-purple-500 h-2 rounded-full transition-all" style="width: {{percentUsed (index .Data "Stats").OutputTokensToday (index .Data "Stats").OutputTokensLimit}}%"></div>
                 </div>
@@ -1656,7 +1707,8 @@ var adminTemplates = []byte(`
 
     <script>
         var clientID = "{{(index .Data "Client").ID}}";
-        var currentModels = {{(index .Data "Client").BackendModels}};
+        var currentModels = {{toJson (index .Data "Client").BackendModels}};
+        if (!Array.isArray(currentModels)) currentModels = [];
 
         function showToast(message, isSuccess) {
             var toast = document.getElementById('toast');
