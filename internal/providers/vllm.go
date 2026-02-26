@@ -234,6 +234,11 @@ func (p *VLLMProvider) ListModels() ([]string, error) {
 	url := p.cfg.BaseURL + "/models"
 	log.Printf("[vllm ListModels] GET %s", url)
 
+	// Create a fresh HTTP client with shorter timeout for this request
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
 	httpReq, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -241,7 +246,7 @@ func (p *VLLMProvider) ListModels() ([]string, error) {
 	p.setHeaders(httpReq)
 
 	log.Printf("[vllm ListModels] Sending request...")
-	resp, err := getVLLMHTTPClient().Do(httpReq)
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		log.Printf("[vllm ListModels] HTTP request failed: %v", err)
 		return nil, err
