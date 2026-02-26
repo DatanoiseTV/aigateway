@@ -947,8 +947,19 @@ var adminTemplates = []byte(`
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
             <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700 lg:col-span-2">
                 <h3 class="text-sm font-semibold text-white mb-3">Top Models (Today)</h3>
-                <div id="modelUsageList" class="space-y-2">
-                    <p class="text-gray-500 text-sm">Loading...</p>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-xs text-gray-400 border-b border-gray-700">
+                                <th class="pb-2">Model</th>
+                                <th class="pb-2 text-right">Requests</th>
+                                <th class="pb-2 text-right">%</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modelUsageList" class="divide-y divide-gray-700">
+                            <tr><td colspan="3" class="py-4 text-gray-500">Loading...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -1032,23 +1043,21 @@ var adminTemplates = []byte(`
             var labels = Object.keys(usage);
             var data = Object.values(usage);
             if (labels.length === 0) {
-                container.innerHTML = '<p class="text-gray-500 text-sm">No usage data yet</p>';
+                container.innerHTML = '<tr><td colspan="3" class="py-4 text-gray-500">No usage data yet</td></tr>';
                 return;
             }
             var total = data.reduce(function(a, b) { return a + b; }, 0);
             var html = '';
             var sorted = labels.map(function(label, i) {
-                return { label: label, count: data[i], color: chartColors[i % chartColors.length] };
+                return { label: label, count: data[i] };
             }).sort(function(a, b) { return b.count - a.count; }).slice(0, 5);
             sorted.forEach(function(item) {
                 var pct = total > 0 ? Math.round(item.count / total * 100) : 0;
-                html += '<div class="flex items-center gap-3">' +
-                    '<div class="w-24 text-xs text-gray-400 truncate font-mono" title="' + item.label + '">' + item.label + '</div>' +
-                    '<div class="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">' +
-                        '<div class="h-full rounded-full" style="width: ' + pct + '%; background-color: ' + item.color + '"></div>' +
-                    '</div>' +
-                    '<div class="w-16 text-xs text-gray-300 text-right font-mono">' + item.count + ' (' + pct + '%)</div>' +
-                '</div>';
+                html += '<tr class="border-b border-gray-700 last:border-0">' +
+                    '<td class="py-2 text-gray-300 font-mono text-xs truncate max-w-xs" title="' + item.label + '">' + item.label + '</td>' +
+                    '<td class="py-2 text-gray-300 text-right font-mono">' + item.count + '</td>' +
+                    '<td class="py-2 text-gray-400 text-right font-mono">' + pct + '%</td>' +
+                '</tr>';
             });
             container.innerHTML = html;
         }
@@ -2137,7 +2146,9 @@ var adminTemplates = []byte(`
         // Model usage bars
         var modelStats = {{toJson (index .Data "ModelStats")}};
         var modelUsageContainer = document.getElementById('modelUsageBars');
-        if (modelStats && modelStats.length > 0) {
+        if (!Array.isArray(modelStats) || modelStats.length === 0) {
+            modelUsageContainer.innerHTML = '<p class="text-gray-500 text-sm">No model data yet</p>';
+        } else {
             var total = modelStats.reduce(function(sum, m) { return sum + m.total_requests; }, 0);
             var colors = ['#3B82F6','#10B981','#8B5CF6','#F59E0B','#EF4444','#EC4899','#06B6D4'];
             var html = '';
