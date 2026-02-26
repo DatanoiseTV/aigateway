@@ -17,7 +17,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"golang.org/x/net/http2"
 )
 
 var (
@@ -31,9 +30,6 @@ func getVLLMHTTPClient() *http.Client {
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 100,
 			IdleConnTimeout:     90 * time.Second,
-		}
-		if err := http2.ConfigureTransport(transport); err != nil {
-			log.Printf("[vllm] Failed to configure HTTP/2: %v", err)
 		}
 		vllmHTTPClient = &http.Client{
 			Transport: transport,
@@ -244,15 +240,14 @@ func (p *VLLMProvider) ListModels() ([]string, error) {
 		log.Printf("[vllm ListModels] WARNING: Proxy env var detected: %s", proxyURL)
 	}
 
-	// Create a fresh HTTP client with no proxy, shorter timeout
+	// Create a fresh HTTP client with HTTP/1.1 (no HTTP/2) to match curl behavior
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
 		IdleConnTimeout:     90 * time.Second,
 		Proxy:               nil, // Explicitly disable proxy
-	}
-	if err := http2.ConfigureTransport(transport); err != nil {
-		log.Printf("[vllm ListModels] Failed to configure HTTP/2: %v", err)
+		TLSClientConfig:     nil, // Use default TLS
+		// Force HTTP/1.1 - do NOT configure HTTP/2
 	}
 
 	client := &http.Client{
@@ -266,7 +261,7 @@ func (p *VLLMProvider) ListModels() ([]string, error) {
 	}
 	p.setHeaders(httpReq)
 
-	log.Printf("[vllm ListModels] Sending request (no proxy)...")
+	log.Printf("[vllm ListModels] Sending request (HTTP/1.1, no proxy)...")
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		log.Printf("[vllm ListModels] HTTP request failed: %v", err)
