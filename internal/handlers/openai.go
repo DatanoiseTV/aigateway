@@ -259,6 +259,40 @@ func (h *OpenAIHandler) buildChatRequest(req OpenAIChatRequest, provider provide
 	for _, msg := range req.Messages {
 		role, _ := msg["role"].(string)
 		content, _ := msg["content"].(string)
+		toolCallID, _ := msg["tool_call_id"].(string)
+
+		// Handle tool result messages
+		if role == "tool" {
+			messages = append(messages, providers.ChatMessage{
+				Role:       role,
+				Content:    content,
+				ToolCallID: toolCallID,
+			})
+			continue
+		}
+
+		// Handle assistant messages with tool_calls (from previous tool call)
+		if toolCallsRaw, ok := msg["tool_calls"].([]interface{}); ok && len(toolCallsRaw) > 0 {
+			toolCalls := make([]providers.ToolCall, len(toolCallsRaw))
+			for i, tcRaw := range toolCallsRaw {
+				if tcMap, ok := tcRaw.(map[string]interface{}); ok {
+					if fn, ok := tcMap["function"].(map[string]interface{}); ok {
+						toolCalls[i] = providers.ToolCall{
+							ID:        getString(tcMap, "id"),
+							Name:      getString(fn, "name"),
+							Arguments: getString(fn, "arguments"),
+						}
+					}
+				}
+			}
+			messages = append(messages, providers.ChatMessage{
+				Role:      role,
+				Content:   content,
+				ToolCalls: toolCalls,
+			})
+			continue
+		}
+
 		if content == "" {
 			continue
 		}
