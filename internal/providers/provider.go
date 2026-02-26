@@ -65,13 +65,18 @@ type ChatMessage struct {
 // ChatRequest is the internal representation of a chat completion request
 // that gets translated into each provider's native format.
 type ChatRequest struct {
-	Model          string        `json:"model"`
-	Messages       []ChatMessage `json:"messages"`
-	MaxTokens      int           `json:"max_tokens,omitempty"`
-	Temperature    float64       `json:"temperature,omitempty"`
-	Stream         bool          `json:"stream,omitempty"`
-	Tools          []Tool        `json:"tools,omitempty"`
-	ResponseFormat any           `json:"response_format,omitempty"`
+	Model          string         `json:"model"`
+	Messages       []ChatMessage  `json:"messages"`
+	MaxTokens      int            `json:"max_tokens,omitempty"`
+	Temperature    float64        `json:"temperature,omitempty"`
+	Stream         bool           `json:"stream,omitempty"`
+	Tools          []Tool         `json:"tools,omitempty"`
+	ResponseFormat any            `json:"response_format,omitempty"`
+	StreamOptions  *StreamOptions `json:"stream_options,omitempty"`
+}
+
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
 // Tool represents a function tool that the model can call.

@@ -53,6 +53,11 @@ type OpenAIChatRequest struct {
 	Stream         bool                     `json:"stream,omitempty"`
 	Tools          []map[string]interface{} `json:"tools,omitempty"`
 	ResponseFormat any                      `json:"response_format,omitempty"`
+	StreamOptions  *StreamOptions           `json:"stream_options,omitempty"`
+}
+
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
 type OpenAIChatResponse struct {
@@ -263,6 +268,12 @@ func (h *OpenAIHandler) buildChatRequest(req OpenAIChatRequest, provider provide
 		Stream:         req.Stream,
 		Tools:          convertTools(req.Tools),
 		ResponseFormat: req.ResponseFormat,
+		StreamOptions: func() *providers.StreamOptions {
+			if req.StreamOptions != nil {
+				return &providers.StreamOptions{IncludeUsage: req.StreamOptions.IncludeUsage}
+			}
+			return nil
+		}(),
 	}
 }
 

@@ -236,6 +236,9 @@ func (p *OpenAICompatProvider) buildRequestBody(req *ChatRequest, stream bool) [
 	if req.ResponseFormat != nil {
 		body["response_format"] = req.ResponseFormat
 	}
+	if req.StreamOptions != nil && req.StreamOptions.IncludeUsage {
+		body["stream_options"] = map[string]interface{}{"include_usage": true}
+	}
 
 	data, _ := json.Marshal(body)
 	return data
