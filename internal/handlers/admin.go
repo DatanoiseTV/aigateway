@@ -924,11 +924,54 @@ var adminTemplates = []byte(`
             </div>
         </div>
         
-        <!-- Charts Row -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-            <div class="bg-gray-800 rounded-2xl p-6 border border-gray-700">
-                <h3 class="text-lg font-semibold text-white mb-4">Model Usage</h3>
-                <canvas id="modelChart" height="200"></canvas>
+        <!-- Charts Row - Compact Model Usage -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700 lg:col-span-2">
+                <h3 class="text-sm font-semibold text-white mb-3">Top Models (Today)</h3>
+                <div id="modelUsageList" class="space-y-2">
+                    <p class="text-gray-500 text-sm">Loading...</p>
+                </div>
+            </div>
+            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
+                <h3 class="text-sm font-semibold text-white mb-3">Quick Stats</h3>
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-400 text-sm">Total Requests</span>
+                        <span id="stat-requests" class="text-white font-mono">0</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-400 text-sm">Input Tokens</span>
+                        <span id="stat-input-tokens" class="text-white font-mono">0</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-400 text-sm">Output Tokens</span>
+                        <span id="stat-output-tokens" class="text-white font-mono">0</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-400 text-sm">Active Clients</span>
+                        <span id="stat-active-clients" class="text-white font-mono">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Mini Charts Row -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
+                <p class="text-gray-400 text-xs mb-1">Requests Trend</p>
+                <canvas id="miniRequestsChart" height="50"></canvas>
+            </div>
+            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
+                <p class="text-gray-400 text-xs mb-1">Tokens Trend</p>
+                <canvas id="miniTokensChart" height="50"></canvas>
+            </div>
+            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
+                <p class="text-gray-400 text-xs mb-1">Latency Trend</p>
+                <canvas id="miniLatencyChart" height="50"></canvas>
+            </div>
+            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
+                <p class="text-gray-400 text-xs mb-1">Clients Trend</p>
+                <canvas id="miniClientsChart" height="50"></canvas>
             </div>
         </div>
         
@@ -977,52 +1020,42 @@ var adminTemplates = []byte(`
     
     <script>
         var chartColors = ['#3B82F6','#10B981','#8B5CF6','#F59E0B','#EF4444','#EC4899','#06B6D4','#F97316','#84CC16','#E879F9'];
-        var modelChart = null;
 
         function initChart(usage) {
-            var el = document.getElementById('modelChart');
+            var container = document.getElementById('modelUsageList');
             var labels = Object.keys(usage);
             var data = Object.values(usage);
             if (labels.length === 0) {
-                el.parentElement.innerHTML = '<h3 class="text-lg font-semibold text-white mb-4">Model Usage</h3><canvas id="modelChart" height="200"></canvas><div id="chartEmpty" class="text-gray-500 text-center py-8">No usage data yet</div>';
+                container.innerHTML = '<p class="text-gray-500 text-sm">No usage data yet</p>';
                 return;
             }
-            modelChart = new Chart(el, {
-                type: 'doughnut',
-                data: {
-                    labels: labels,
-                    datasets: [{ data: data, backgroundColor: chartColors.slice(0, labels.length), borderWidth: 0 }]
-                },
-                options: {
-                    responsive: true,
-                    animation: { duration: 300 },
-                    plugins: { legend: { position: 'right', labels: { color: '#9CA3AF' } } }
-                }
+            var total = data.reduce(function(a, b) { return a + b; }, 0);
+            var html = '';
+            var sorted = labels.map(function(label, i) {
+                return { label: label, count: data[i], color: chartColors[i % chartColors.length] };
+            }).sort(function(a, b) { return b.count - a.count; }).slice(0, 5);
+            sorted.forEach(function(item) {
+                var pct = total > 0 ? Math.round(item.count / total * 100) : 0;
+                html += '<div class="flex items-center gap-3">' +
+                    '<div class="w-24 text-xs text-gray-400 truncate font-mono" title="' + item.label + '">' + item.label + '</div>' +
+                    '<div class="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">' +
+                        '<div class="h-full rounded-full" style="width: ' + pct + '%; background-color: ' + item.color + '"></div>' +
+                    '</div>' +
+                    '<div class="w-16 text-xs text-gray-300 text-right font-mono">' + item.count + ' (' + pct + '%)</div>' +
+                '</div>';
             });
+            container.innerHTML = html;
         }
 
         function updateChart(usage) {
-            var labels = Object.keys(usage);
-            var data = Object.values(usage);
-            if (labels.length === 0) return;
-            var empty = document.getElementById('chartEmpty');
-            if (empty) empty.remove();
-            if (!modelChart) {
-                initChart(usage);
-                return;
-            }
-            modelChart.data.labels = labels;
-            modelChart.data.datasets[0].data = data;
-            modelChart.data.datasets[0].backgroundColor = chartColors.slice(0, labels.length);
-            modelChart.update();
+            initChart(usage);
         }
 
         function updateStats(stats) {
-            document.getElementById('stat-requests').textContent = stats.total_requests_today;
-            document.getElementById('stat-input-tokens').textContent = stats.total_input_tokens_today;
-            document.getElementById('stat-output-tokens').textContent = stats.total_output_tokens_today;
+            document.getElementById('stat-requests').textContent = stats.total_requests_today.toLocaleString();
+            document.getElementById('stat-input-tokens').textContent = (stats.total_input_tokens_today / 1000).toFixed(1) + 'k';
+            document.getElementById('stat-output-tokens').textContent = (stats.total_output_tokens_today / 1000).toFixed(1) + 'k';
             document.getElementById('stat-active-clients').textContent = stats.active_clients;
-            document.getElementById('stat-total-clients').textContent = stats.total_clients;
         }
 
         function updateRecentLogs(logs) {
