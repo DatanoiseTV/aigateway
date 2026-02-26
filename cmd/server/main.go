@@ -150,7 +150,13 @@ func main() {
 	router.Handle("/static/*", http.FileServer(http.FS(templates.Static)))
 
 	// Swagger docs
-	router.Get("/swagger/*", httpSwagger.Handler(
+	router.Get("/swagger", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/swagger/", http.StatusMovedPermanently)
+	})
+	router.Get("/swagger/", httpSwagger.Handler(
+		httpSwagger.URL("/swagger/doc.json"),
+	))
+	router.Get("/swagger/doc.json", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),
 	))
 
