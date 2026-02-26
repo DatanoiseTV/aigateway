@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -234,9 +235,29 @@ func (p *VLLMProvider) ListModels() ([]string, error) {
 	url := p.cfg.BaseURL + "/models"
 	log.Printf("[vllm ListModels] GET %s", url)
 
-	// Create a fresh HTTP client with shorter timeout for this request
+	// Check for proxy environment variables
+	proxyURL := os.Getenv("HTTP_PROXY")
+	if proxyURL == "" {
+		proxyURL = os.Getenv("HTTPS_PROXY")
+	}
+	if proxyURL != "" {
+		log.Printf("[vllm ListModels] WARNING: Proxy env var detected: %s", proxyURL)
+	}
+
+	// Create a fresh HTTP client with no proxy, shorter timeout
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+		Proxy:               nil, // Explicitly disable proxy
+	}
+	if err := http2.ConfigureTransport(transport); err != nil {
+		log.Printf("[vllm ListModels] Failed to configure HTTP/2: %v", err)
+	}
+
 	client := &http.Client{
-		Timeout: 30 * time.Second,
+		Transport: transport,
+		Timeout:   30 * time.Second,
 	}
 
 	httpReq, err := http.NewRequest("GET", url, nil)
@@ -245,7 +266,7 @@ func (p *VLLMProvider) ListModels() ([]string, error) {
 	}
 	p.setHeaders(httpReq)
 
-	log.Printf("[vllm ListModels] Sending request...")
+	log.Printf("[vllm ListModels] Sending request (no proxy)...")
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		log.Printf("[vllm ListModels] HTTP request failed: %v", err)
