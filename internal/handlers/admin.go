@@ -980,7 +980,7 @@ var adminTemplates = []byte(`
                                 </span>
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">{{.InputTokens}} / {{.OutputTokens}}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">{{.LatencyMs}}ms</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">{{formatDuration .LatencyMs}}</td>
                             <td class="px-6 py-4 whitespace-nowrap">
                                 {{if .RequestBody}}<span class="text-xs px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded">body</span>{{end}}
                         </tr>
@@ -993,10 +993,32 @@ var adminTemplates = []byte(`
                 </table>
             </div>
         </div>
-    </div>
-    
-    <script>
+
+        <!-- Request Details Modal -->
+        <div id="requestModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center">
+            <div class="bg-gray-800 rounded-2xl border border-gray-700 w-full max-w-3xl max-h-[80vh] flex flex-col">
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+                    <h3 class="text-lg font-semibold text-white">Request Details</h3>
+                    <button onclick="closeRequestModal()" class="text-gray-400 hover:text-white">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+                <div class="flex-1 overflow-auto p-6">
+                    <pre id="requestBodyContent" class="text-sm text-gray-300 font-mono whitespace-pre-wrap break-all"></pre>
+                </div>
+            </div>
+        </div>
+
+        <script>
         var chartColors = ['#3B82F6','#10B981','#8B5CF6','#F59E0B','#EF4444','#EC4899','#06B6D4','#F97316','#84CC16','#E879F9'];
+
+        function formatDuration(ms) {
+            if (ms < 1000) return ms + 'ms';
+            if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+            var mins = Math.floor(ms / 60000);
+            var secs = Math.floor((ms % 60000) / 1000);
+            return mins + 'm ' + secs + 's';
+        }
 
         function initChart(usage) {
             var container = document.getElementById('modelUsageList');
@@ -1050,7 +1072,7 @@ var adminTemplates = []byte(`
                 html += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">' + l.model + '</td>';
                 html += '<td class="px-6 py-4 whitespace-nowrap"><span class="px-2 py-1 text-xs font-medium rounded-full ' + statusClass + '">' + l.status_code + '</span></td>';
                 html += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">' + l.input_tokens + ' / ' + l.output_tokens + '</td>';
-                html += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">' + l.latency_ms + 'ms</td>';
+                html += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">' + formatDuration(l.latency_ms) + '</td>';
                 html += '</tr>';
             });
             tbody.innerHTML = html;
@@ -1730,7 +1752,7 @@ var adminTemplates = []byte(`
                                     {{.StatusCode}}
                                 </span>
                             </td>
-                            <td class="px-6 py-4 text-sm text-gray-400">{{.LatencyMs}}ms</td>
+                            <td class="px-6 py-4 text-sm text-gray-400">{{formatDuration .LatencyMs}}</td>
                             <td class="px-6 py-4 text-sm text-gray-400">{{.InputTokens}}</td>
                             <td class="px-6 py-4 text-sm text-gray-400">{{.OutputTokens}}</td>
                             <td class="px-6 py-4 text-sm text-red-400 max-w-xs truncate">{{.ErrorMessage}}</td>
@@ -2103,7 +2125,7 @@ var adminTemplates = []byte(`
                             <td class="px-6 py-4 text-sm text-white">{{.Model}}</td>
                             <td class="px-6 py-4 text-sm text-gray-300">{{formatInt .TotalRequests}}</td>
                             <td class="px-6 py-4 text-sm text-gray-300">{{formatInt .TotalTokens}}</td>
-                            <td class="px-6 py-4 text-sm text-gray-300">{{printf "%.0f" .AvgLatencyMs}}ms</td>
+                            <td class="px-6 py-4 text-sm text-gray-300">{{formatDuration (printf "%.0f" .AvgLatencyMs | int)}}</td>
                             <td class="px-6 py-4 text-sm">
                                 <span class="px-2 py-1 text-xs font-medium rounded-full {{if ge .SuccessRate 95.0}}bg-green-500/20 text-green-400{{else if ge .SuccessRate 80.0}}bg-yellow-500/20 text-yellow-400{{else}}bg-red-500/20 text-red-400{{end}}">
                                     {{printf "%.1f" .SuccessRate}}%

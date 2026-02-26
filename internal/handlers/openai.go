@@ -222,11 +222,11 @@ func (h *OpenAIHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if req.Stream {
-		h.handleStreamingRequest(w, r, client, req, provider, chatReq)
+		h.handleStreamingRequest(w, r, client, req, provider, chatReq, string(body))
 		return
 	}
 
-	h.handleNonStreamingRequest(w, client, req, provider, chatReq)
+	h.handleNonStreamingRequest(w, client, req, provider, chatReq, string(body))
 }
 
 // buildChatRequest converts the OpenAI-format request into our internal ChatRequest,
@@ -304,7 +304,7 @@ func getString(m map[string]interface{}, key string) string {
 
 // handleNonStreamingRequest sends the request through the provider and returns
 // the full response as an OpenAI-compatible JSON response.
-func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client *models.Client, req OpenAIChatRequest, provider providers.Provider, chatReq *providers.ChatRequest) {
+func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client *models.Client, req OpenAIChatRequest, provider providers.Provider, chatReq *providers.ChatRequest, requestBody string) {
 	start := time.Now()
 	maxToolIterations := 5
 
@@ -444,7 +444,7 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 	}
 
 	responseText, inputTokens, outputTokens, _ := provider.ParseResponse(respBody)
-	h.geminiService.LogRequest(client.ID, chatReq.Model, statusCode, inputTokens, outputTokens, latencyMs, "")
+	h.geminiService.LogRequest(client.ID, chatReq.Model, statusCode, inputTokens, outputTokens, latencyMs, "", requestBody)
 
 	responseID := "chatcmpl-" + randomID(12)
 	log.Printf("[CHAT] Sending response: text length=%d", len(responseText))
@@ -482,7 +482,7 @@ func (h *OpenAIHandler) handleNonStreamingRequest(w http.ResponseWriter, client 
 
 // handleStreamingRequest sends a streaming request through the provider,
 // reads SSE chunks, and translates them to OpenAI-format SSE in real time.
-func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Request, client *models.Client, req OpenAIChatRequest, provider providers.Provider, chatReq *providers.ChatRequest) {
+func (h *OpenAIHandler) handleStreamingRequest(w http.ResponseWriter, r *http.Request, client *models.Client, req OpenAIChatRequest, provider providers.Provider, chatReq *providers.ChatRequest, requestBody string) {
 	start := time.Now()
 
 	log.Printf("[CHAT] %s calling ChatCompletionStream with model: %s, ToolMode: %q", provider.Name(), chatReq.Model, client.ToolMode)
@@ -760,7 +760,7 @@ toolLoop:
 	flusher.Flush()
 
 	// Log the request after streaming completes
-	h.geminiService.LogRequest(client.ID, chatReq.Model, resp.StatusCode, inputTokens, outputTokens, latencyMs, "")
+	h.geminiService.LogRequest(client.ID, chatReq.Model, resp.StatusCode, inputTokens, outputTokens, latencyMs, "", requestBody)
 
 	// Update client models if not already cached
 	if client.BackendModels == "" {
