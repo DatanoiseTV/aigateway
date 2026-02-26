@@ -235,6 +235,7 @@ func (p *VLLMProvider) ListModels() ([]string, error) {
 	}
 	p.setHeaders(httpReq)
 
+	log.Printf("[vllm ListModels] Sending request...")
 	resp, err := getVLLMHTTPClient().Do(httpReq)
 	if err != nil {
 		log.Printf("[vllm ListModels] HTTP request failed: %v", err)
@@ -244,13 +245,20 @@ func (p *VLLMProvider) ListModels() ([]string, error) {
 
 	log.Printf("[vllm ListModels] Response status: %d", resp.StatusCode)
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("[vllm ListModels] Failed to read response body: %v", err)
+		return nil, err
+	}
+	log.Printf("[vllm ListModels] Response body: %s", string(body))
+
 	var response struct {
 		Data []struct {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	if err := json.Unmarshal(body, &response); err != nil {
 		log.Printf("[vllm ListModels] Failed to decode response: %v", err)
 		return nil, err
 	}
