@@ -858,13 +858,13 @@ var adminTemplates = []byte(`
                 
                 <div class="mb-6">
                     <label class="block text-gray-300 text-sm font-medium mb-2">Username</label>
-                    <input type="text" name="username" placeholder="admin" 
+                    <input type="text" name="username" 
                         class="w-full px-4 py-3 bg-gray-900/50 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
                 </div>
                 
                 <div class="mb-8">
                     <label class="block text-gray-300 text-sm font-medium mb-2">Password</label>
-                    <input type="password" name="password" placeholder="Enter password"
+                    <input type="password" name="password" 
                         class="w-full px-4 py-3 bg-gray-900/50 border border-gray-600 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
                 </div>
                 
