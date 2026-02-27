@@ -9,6 +9,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const wsDebug = false
+
 // DashboardHub manages WebSocket connections from admin dashboard clients
 // and broadcasts real-time stats updates whenever a new request is logged.
 type DashboardHub struct {
@@ -33,7 +35,9 @@ func (h *DashboardHub) Register(conn *websocket.Conn) {
 	h.clients[conn] = true
 	h.mu.Unlock()
 
-	log.Printf("[WS] Dashboard client connected (%d total)", h.clientCount())
+	if wsDebug {
+		log.Printf("[WS] Dashboard client connected (%d total)", h.clientCount())
+	}
 
 	// Send initial snapshot immediately
 	h.sendStatsTo(conn)
@@ -79,7 +83,9 @@ func (h *DashboardHub) unregister(conn *websocket.Conn) {
 	delete(h.clients, conn)
 	h.mu.Unlock()
 	conn.Close()
-	log.Printf("[WS] Dashboard client disconnected (%d remaining)", h.clientCount())
+	if wsDebug {
+		log.Printf("[WS] Dashboard client disconnected (%d remaining)", h.clientCount())
+	}
 }
 
 func (h *DashboardHub) clientCount() int {
@@ -95,7 +101,9 @@ func (h *DashboardHub) NotifyUpdate() {
 	if h.clientCount() == 0 {
 		return
 	}
-	log.Printf("[WS] NotifyUpdate called, clients: %d", h.clientCount())
+	if wsDebug {
+		log.Printf("[WS] NotifyUpdate called, clients: %d", h.clientCount())
+	}
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -120,7 +128,9 @@ func (h *DashboardHub) broadcast() {
 		return
 	}
 
-	log.Printf("[WS] Broadcasting to %d clients", h.clientCount())
+	if wsDebug {
+		log.Printf("[WS] Broadcasting to %d clients", h.clientCount())
+	}
 
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -169,7 +179,9 @@ func (h *DashboardHub) buildPayload() []byte {
 		log.Printf("[WS] Failed to get model usage: %v", err)
 		modelUsage = make(map[string]int)
 	}
-	log.Printf("[WS] Model usage: %v", modelUsage)
+	if wsDebug {
+		log.Printf("[WS] Model usage: %v", modelUsage)
+	}
 
 	clientStats, _ := h.statsService.GetAllClientStats()
 	clientStatsMap := make(map[string]interface{})

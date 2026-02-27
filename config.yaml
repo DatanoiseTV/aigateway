@@ -7,7 +7,7 @@ server:
         key_file: ""
 admin:
     username: admin
-    password_hash: $2a$10$7Va1tV6kt9oMzXuSb.MmdumZ0mnd4yq6VQN5HwTJyPZsXQXthHD3W
+    password_hash: $2a$10$X7UQgs8TBf7lf244wC.YPuu9db67ncNKrx.XhMUB1qyqUH3IvFgnu
     session_secret: e29ad02fae8192569b578627528aead9
 providers: {}
 defaults:
