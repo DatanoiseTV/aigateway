@@ -66,16 +66,6 @@ func NewOpenRouterProvider(cfg config.ProviderConfig) *OpenAICompatProvider {
 	return &OpenAICompatProvider{name: "openrouter", cfg: cfg}
 }
 
-func NewOllamaProvider(name string, cfg config.ProviderConfig) *OpenAICompatProvider {
-	if cfg.BaseURL == "" {
-		cfg.BaseURL = "http://localhost:11434"
-	}
-	if name == "" {
-		name = "ollama"
-	}
-	return &OpenAICompatProvider{name: name, cfg: cfg}
-}
-
 func NewLMStudioProvider(name string, cfg config.ProviderConfig) *OpenAICompatProvider {
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = "http://localhost:1234/v1"
@@ -123,8 +113,6 @@ func (p *OpenAICompatProvider) ChatCompletion(req *ChatRequest) ([]byte, int, er
 	// Determine the correct endpoint based on provider type
 	var url string
 	switch p.name {
-	case "ollama":
-		url = p.cfg.BaseURL + "/api/chat"
 	case "lmstudio":
 		// LM Studio - ensure /v1 is in the URL
 		baseURL := p.cfg.BaseURL
@@ -177,8 +165,6 @@ func (p *OpenAICompatProvider) ChatCompletionStream(req *ChatRequest) (*http.Res
 	// Determine the correct endpoint based on provider type
 	var url string
 	switch p.name {
-	case "ollama":
-		url = p.cfg.BaseURL + "/api/chat"
 	case "lmstudio":
 		// LM Studio - ensure /v1 is in the URL
 		baseURL := p.cfg.BaseURL
@@ -404,8 +390,6 @@ func (p *OpenAICompatProvider) TestConnection() (string, bool, error) {
 	// Determine the correct endpoint based on provider type
 	var url string
 	switch p.name {
-	case "ollama":
-		url = p.cfg.BaseURL + "/api/tags"
 	case "lmstudio":
 		// LM Studio base URL already includes /v1
 		url = p.cfg.BaseURL + "/models"
@@ -437,8 +421,6 @@ func (p *OpenAICompatProvider) FetchModels() ([]string, error) {
 	// Determine the models endpoint based on provider type
 	var url string
 	switch p.name {
-	case "ollama":
-		url = p.cfg.BaseURL + "/api/tags"
 	case "lmstudio":
 		// LM Studio - append /v1/models to ensure correct endpoint
 		baseURL := p.cfg.BaseURL
@@ -490,33 +472,17 @@ func (p *OpenAICompatProvider) FetchModels() ([]string, error) {
 	// Parse the response based on provider type
 	var models []string
 
-	switch p.name {
-	case "ollama":
-		// Ollama: {"models": [{"name": "llama3.2:latest", ...}]}
-		var ollamaResp struct {
-			Models []struct {
-				Name string `json:"name"`
-			} `json:"models"`
-		}
-		if err := json.Unmarshal(body, &ollamaResp); err != nil {
-			return nil, err
-		}
-		for _, m := range ollamaResp.Models {
-			models = append(models, m.Name)
-		}
-	default:
-		// OpenAI-compatible: {"data": [{"id": "gpt-4", ...}]}
-		var openaiResp struct {
-			Data []struct {
-				ID string `json:"id"`
-			} `json:"data"`
-		}
-		if err := json.Unmarshal(body, &openaiResp); err != nil {
-			return nil, err
-		}
-		for _, m := range openaiResp.Data {
-			models = append(models, m.ID)
-		}
+	// OpenAI-compatible: {"data": [{"id": "gpt-4", ...}]}
+	var openaiResp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &openaiResp); err != nil {
+		return nil, err
+	}
+	for _, m := range openaiResp.Data {
+		models = append(models, m.ID)
 	}
 
 	return models, nil
