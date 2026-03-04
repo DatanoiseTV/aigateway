@@ -1,0 +1,81 @@
+server:
+  host: 0.0.0.0
+  port: 8090
+  https:
+    enabled: false
+    cert_file: ""
+    key_file: ""
+
+admin:
+  username: admin
+  # Bcrypt hash of the admin password.
+  # Generate with:  docker run --rm <image> hashpw 'your-password'
+  # Or set ADMIN_PASSWORD env var and the entrypoint will fill this in.
+  # Leave as __SETUP_REQUIRED__ to use the web-based setup wizard on first boot.
+  password_hash: "__SETUP_REQUIRED__"
+  # Random hex string used to sign session cookies.
+  # Generate with:  openssl rand -hex 16
+  # If left empty the app will auto-generate one (requires writable config).
+  session_secret: ""
+
+# Configure one or more upstream LLM providers.
+providers:
+  # gemini:
+  #   type: gemini
+  #   api_key: ""
+  #   default_model: gemini-2.5-flash
+  #   allowed_models:
+  #     - gemini-2.5-flash
+  #     - gemini-2.5-pro
+  #   timeout_seconds: 120
+  #
+  # openai:
+  #   type: openai
+  #   api_key: ""
+  #   default_model: gpt-4o
+  #   timeout_seconds: 120
+  #
+  # anthropic:
+  #   type: anthropic
+  #   api_key: ""
+  #   default_model: claude-sonnet-4-20250514
+  #   timeout_seconds: 120
+  #
+  # mistral:
+  #   type: mistral
+  #   api_key: ""
+  #   default_model: mistral-large-latest
+  #
+  # ollama:
+  #   type: ollama
+  #   base_url: http://host.docker.internal:11434/v1
+  #   default_model: llama3.2
+  #
+  # openrouter:
+  #   type: openrouter
+  #   api_key: ""
+  #   default_model: anthropic/claude-sonnet-4
+
+defaults:
+  rate_limit:
+    requests_per_minute: 60
+    requests_per_hour: 1000
+    requests_per_day: 10000
+  quota:
+    max_input_tokens_per_day: 1000000
+    max_output_tokens_per_day: 500000
+    max_requests_per_day: 1000
+    max_input_tokens: 1000000
+    max_output_tokens: 8192
+
+database:
+  path: ./data/gateway.db
+
+logging:
+  level: info
+  file: ./logs/gateway.log
+
+# prometheus:
+#   enabled: true
+#   username: prometheus
+#   password: "generate-a-secure-password"
